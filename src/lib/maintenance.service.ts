@@ -70,6 +70,47 @@ export const maintenanceService = {
   async getTotalCost(vehicleId: string): Promise<number> {
     const records = await this.getByVehicle(vehicleId)
     return records.reduce((total, record) => total + record.cost, 0)
+  },
+
+  /**
+   * Récupère le dernier entretien effectué pour un type et un véhicule donnés
+   */
+  async getLastByType(vehicleId: string, maintenanceType: string): Promise<MaintenanceRecord | null> {
+    const { data, error } = await supabase
+      .from('maintenance_records')
+      .select('*')
+      .eq('vehicle_id', vehicleId)
+      .eq('type', maintenanceType)
+      .order('date', { ascending: false })
+      .order('mileage', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    
+    if (error) throw error
+    return data
+  },
+
+  /**
+   * Récupère les derniers entretiens par type pour un véhicule (optimisé pour charger tous les types en une requête)
+   */
+  async getLastByTypeForVehicle(vehicleId: string): Promise<Record<string, MaintenanceRecord>> {
+    const { data, error } = await supabase
+      .from('maintenance_records')
+      .select('*')
+      .eq('vehicle_id', vehicleId)
+      .order('date', { ascending: false })
+      .order('mileage', { ascending: false })
+    
+    if (error) throw error
+    
+    // Grouper par type et garder seulement le plus récent
+    const lastByType: Record<string, MaintenanceRecord> = {}
+    for (const record of data || []) {
+      if (!lastByType[record.type]) {
+        lastByType[record.type] = record
+      }
+    }
+    return lastByType
   }
 }
 

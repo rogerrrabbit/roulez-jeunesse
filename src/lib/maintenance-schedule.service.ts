@@ -1,10 +1,12 @@
 import { supabase } from './supabase'
+import { maintenanceService } from './maintenance.service'
 import type { 
   MaintenanceSchedule, 
   MaintenanceScheduleInsert, 
   MaintenanceScheduleUpdate,
   MaintenanceStatus,
-  Vehicle
+  Vehicle,
+  MaintenanceRecord
 } from './database.types'
 
 export const maintenanceScheduleService = {
@@ -87,8 +89,14 @@ export const maintenanceScheduleService = {
 
   /**
    * Calcule le statut d'un calendrier d'entretien
+   * lastRecord: optionnel, dernier entretien de ce type depuis maintenance_records
+   * Si fourni, il est utilisé en priorité sur les champs last_done_* du schedule
    */
-  calculateStatus(schedule: MaintenanceSchedule, vehicle: Vehicle): MaintenanceStatus {
+  calculateStatus(
+    schedule: MaintenanceSchedule, 
+    vehicle: Vehicle, 
+    lastRecord?: MaintenanceRecord | null
+  ): MaintenanceStatus {
     const today = new Date()
     const currentMileage = vehicle.current_mileage
     
@@ -98,9 +106,26 @@ export const maintenanceScheduleService = {
     let kmUntilDue: number | null = null
     let status: 'ok' | 'due_soon' | 'overdue' = 'ok'
 
+    // Utiliser les données du lastRecord si disponible, sinon les champs du schedule
+    const lastDoneDate = lastRecord?.date || schedule.last_done_date
+    const lastDoneMileage = lastRecord?.mileage ?? schedule.last_done_mileage
+
+    // Si jamais fait, considérer comme à faire bientôt
+    if (lastDoneDate === null && lastDoneMileage === null) {
+      return {
+        schedule,
+        status: 'due_soon',
+        nextDueDate: null,
+        nextDueMileage: schedule.interval_km ? currentMileage : null,
+        daysUntilDue: null,
+        kmUntilDue: null,
+        lastRecord: lastRecord || null
+      }
+    }
+
     // Calcul par kilométrage
-    if (schedule.interval_km && schedule.last_done_mileage !== null) {
-      nextDueMileage = schedule.last_done_mileage + schedule.interval_km
+    if (schedule.interval_km && lastDoneMileage !== null) {
+      nextDueMileage = lastDoneMileage + schedule.interval_km
       kmUntilDue = nextDueMileage - currentMileage
       
       if (kmUntilDue <= 0) {
@@ -111,8 +136,8 @@ export const maintenanceScheduleService = {
     }
 
     // Calcul par date
-    if (schedule.interval_months && schedule.last_done_date) {
-      const lastDate = new Date(schedule.last_done_date)
+    if (schedule.interval_months && lastDoneDate) {
+      const lastDate = new Date(lastDoneDate)
       const dueDate = new Date(lastDate)
       dueDate.setMonth(dueDate.getMonth() + schedule.interval_months)
       nextDueDate = dueDate.toISOString().split('T')[0]
@@ -127,27 +152,31 @@ export const maintenanceScheduleService = {
       }
     }
 
-    // Si jamais fait, considérer comme à faire bientôt
-    if (schedule.last_done_date === null && schedule.last_done_mileage === null) {
-      status = 'due_soon'
-    }
-
     return {
       schedule,
       status,
       nextDueDate,
       nextDueMileage,
       daysUntilDue,
-      kmUntilDue
+      kmUntilDue,
+      lastRecord: lastRecord || null
     }
   },
 
   /**
    * Obtient le statut de tous les entretiens d'un véhicule
+   * Récupère automatiquement les derniers entretiens depuis maintenance_records
    */
   async getVehicleMaintenanceStatus(vehicle: Vehicle): Promise<MaintenanceStatus[]> {
-    const schedules = await this.getByVehicle(vehicle.id)
-    return schedules.map(schedule => this.calculateStatus(schedule, vehicle))
+    const [schedules, lastRecordsByType] = await Promise.all([
+      this.getByVehicle(vehicle.id),
+      maintenanceService.getLastByTypeForVehicle(vehicle.id)
+    ])
+    
+    return schedules.map(schedule => {
+      const lastRecord = lastRecordsByType[schedule.maintenance_type] || null
+      return this.calculateStatus(schedule, vehicle, lastRecord)
+    })
   },
 
   /**

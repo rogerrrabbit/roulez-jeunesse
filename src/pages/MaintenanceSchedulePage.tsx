@@ -85,26 +85,27 @@ export function MaintenanceSchedulePage() {
     }
   }
 
-  const calculateStatuses = () => {
-    const relevantSchedules = filterVehicle 
-      ? schedules.filter(s => s.vehicle_id === filterVehicle)
-      : schedules
+  const calculateStatuses = async () => {
+    // Obtenir les véhicules concernés
+    const targetVehicles = filterVehicle 
+      ? vehicles.filter(v => v.id === filterVehicle)
+      : vehicles
 
-    const newStatuses: MaintenanceStatus[] = []
-    for (const schedule of relevantSchedules) {
-      const vehicle = vehicles.find(v => v.id === schedule.vehicle_id)
-      if (vehicle) {
-        newStatuses.push(maintenanceScheduleService.calculateStatus(schedule, vehicle))
-      }
+    const allStatuses: MaintenanceStatus[] = []
+    
+    for (const vehicle of targetVehicles) {
+      // Utilise getVehicleMaintenanceStatus qui charge automatiquement les lastRecords
+      const vehicleStatuses = await maintenanceScheduleService.getVehicleMaintenanceStatus(vehicle)
+      allStatuses.push(...vehicleStatuses)
     }
     
     // Trier par statut: overdue d'abord, puis due_soon, puis ok
-    newStatuses.sort((a, b) => {
+    allStatuses.sort((a, b) => {
       const order = { overdue: 0, due_soon: 1, ok: 2 }
       return order[a.status] - order[b.status]
     })
     
-    setStatuses(newStatuses)
+    setStatuses(allStatuses)
   }
 
   const openScheduleModal = (schedule?: MaintenanceSchedule) => {
@@ -374,8 +375,12 @@ export function MaintenanceSchedulePage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {statuses.map(({ schedule, status, nextDueDate, nextDueMileage, daysUntilDue, kmUntilDue }) => {
+          {statuses.map(({ schedule, status, nextDueDate, nextDueMileage, daysUntilDue, kmUntilDue, lastRecord }) => {
             const statusConfig = MAINTENANCE_STATUS_LABELS[status]
+            
+            // Utiliser les données du lastRecord si disponibles, sinon celles du schedule
+            const lastDoneDate = lastRecord?.date || schedule.last_done_date
+            const lastDoneMileage = lastRecord?.mileage ?? schedule.last_done_mileage
             
             return (
               <div 
@@ -419,20 +424,32 @@ export function MaintenanceSchedulePage() {
                       </div>
 
                       <div className="flex flex-wrap gap-4 mt-2 text-sm">
-                        {schedule.last_done_date && (
+                        {lastDoneDate ? (
                           <span className="text-gray-500">
-                            Dernier: {formatDate(schedule.last_done_date)}
-                            {schedule.last_done_mileage && ` (${schedule.last_done_mileage.toLocaleString()} km)`}
+                            Dernier: {formatDate(lastDoneDate)}
+                            {lastDoneMileage && ` (${lastDoneMileage.toLocaleString()} km)`}
+                            {lastRecord?.description && (
+                              <span className="italic text-gray-400 ml-1">
+                                — {lastRecord.description.slice(0, 50)}{lastRecord.description.length > 50 ? '...' : ''}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-yellow-600">
+                            Jamais effectué
                           </span>
                         )}
-                        {(nextDueDate || nextDueMileage) && (
+                      </div>
+                      
+                      {(nextDueDate || nextDueMileage) && (
+                        <div className="flex flex-wrap gap-4 mt-1 text-sm">
                           <span className={status === 'overdue' ? 'text-red-600 font-medium' : 'text-gray-600'}>
                             Prochain: 
                             {nextDueDate && ` ${formatDate(nextDueDate)}`}
                             {nextDueMileage && ` (${nextDueMileage.toLocaleString()} km)`}
                           </span>
-                        )}
-                      </div>
+                        </div>
+                      )}
 
                       {(daysUntilDue !== null || kmUntilDue !== null) && (
                         <div className="flex gap-4 mt-1 text-sm">

@@ -348,4 +348,5 @@ export interface MaintenanceStatus {
   nextDueMileage: number | null
   daysUntilDue: number | null
   kmUntilDue: number | null
+  lastRecord: MaintenanceRecord | null
 }
