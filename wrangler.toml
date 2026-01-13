@@ -1,0 +1,10 @@
+name = "roulez-jeunesse"
+compatibility_date = "2024-01-01"
+
+# Pour Cloudflare Pages
+pages_build_output_dir = "./dist"
+
+[vars]
+# Variables d'environnement (à configurer dans le dashboard Cloudflare)
+# VITE_SUPABASE_URL = ""
+# VITE_SUPABASE_ANON_KEY = ""
