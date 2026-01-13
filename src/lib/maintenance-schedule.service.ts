@@ -174,41 +174,48 @@ export const maintenanceScheduleService = {
 export const DEFAULT_MAINTENANCE_SCHEDULES: Omit<MaintenanceScheduleInsert, 'vehicle_id' | 'user_id'>[] = [
   {
     maintenance_type: 'oil_change',
-    name: 'Vidange huile moteur',
+    name: 'Vidange huile moteur + filtre',
     interval_km: 15000,
     interval_months: 12,
     notes: 'Inclut le remplacement du filtre à huile'
   },
   {
-    maintenance_type: 'filters',
+    maintenance_type: 'air_filter',
     name: 'Filtre à air',
     interval_km: 30000,
     interval_months: 24,
     notes: 'À vérifier plus souvent en environnement poussiéreux'
   },
   {
-    maintenance_type: 'filters',
+    maintenance_type: 'cabin_filter',
     name: 'Filtre habitacle',
     interval_km: 20000,
     interval_months: 12,
     notes: 'Filtre pollen / climatisation'
   },
   {
-    maintenance_type: 'brake_service',
+    maintenance_type: 'brake_pads_front',
     name: 'Plaquettes de frein avant',
     interval_km: 30000,
     interval_months: null,
     notes: 'Vérifier l\'usure régulièrement'
   },
   {
-    maintenance_type: 'brake_service',
+    maintenance_type: 'brake_pads_rear',
+    name: 'Plaquettes de frein arrière',
+    interval_km: 50000,
+    interval_months: null,
+    notes: 'Usure plus lente que les plaquettes avant'
+  },
+  {
+    maintenance_type: 'brake_fluid',
     name: 'Liquide de frein',
     interval_km: null,
     interval_months: 24,
-    notes: 'Remplacement tous les 2 ans'
+    notes: 'Remplacement tous les 2 ans - hygroscopique'
   },
   {
-    maintenance_type: 'cooling',
+    maintenance_type: 'coolant',
     name: 'Liquide de refroidissement',
     interval_km: 60000,
     interval_months: 48,
@@ -219,7 +226,7 @@ export const DEFAULT_MAINTENANCE_SCHEDULES: Omit<MaintenanceScheduleInsert, 'veh
     name: 'Courroie de distribution',
     interval_km: 120000,
     interval_months: 60,
-    notes: 'Critique - À ne pas dépasser'
+    notes: 'Critique - À ne pas dépasser. Inclure pompe à eau si recommandé'
   },
   {
     maintenance_type: 'spark_plugs',
@@ -229,7 +236,7 @@ export const DEFAULT_MAINTENANCE_SCHEDULES: Omit<MaintenanceScheduleInsert, 'veh
     notes: 'Moteurs essence uniquement'
   },
   {
-    maintenance_type: 'tire_change',
+    maintenance_type: 'tire_rotation',
     name: 'Rotation des pneus',
     interval_km: 10000,
     interval_months: null,
@@ -241,6 +248,13 @@ export const DEFAULT_MAINTENANCE_SCHEDULES: Omit<MaintenanceScheduleInsert, 'veh
     interval_km: null,
     interval_months: 24,
     notes: 'Obligatoire - Véhicules de plus de 4 ans'
+  },
+  {
+    maintenance_type: 'ac_service',
+    name: 'Entretien climatisation',
+    interval_km: null,
+    interval_months: 24,
+    notes: 'Vérification et recharge si nécessaire'
   }
 ]
 

@@ -1,12 +1,18 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { vehicleService } from '../lib/vehicles.service'
+import { MAINTENANCE_TYPES } from '../lib/maintenance.service'
 import { 
   maintenanceScheduleService, 
   MAINTENANCE_STATUS_LABELS 
 } from '../lib/maintenance-schedule.service'
-import { MAINTENANCE_TYPES } from '../lib/maintenance.service'
-import type { Vehicle, MaintenanceSchedule, MaintenanceScheduleInsert, MaintenanceStatus } from '../lib/database.types'
+import { MaintenanceModal } from '../components/MaintenanceModal'
+import type { 
+  Vehicle, 
+  MaintenanceSchedule, 
+  MaintenanceScheduleInsert, 
+  MaintenanceStatus
+} from '../lib/database.types'
 import { 
   CalendarCheck, 
   Plus, 
@@ -30,13 +36,16 @@ export function MaintenanceSchedulePage() {
   const [schedules, setSchedules] = useState<MaintenanceSchedule[]>([])
   const [statuses, setStatuses] = useState<MaintenanceStatus[]>([])
   const [loading, setLoading] = useState(true)
-  const [showModal, setShowModal] = useState(false)
+  const [showScheduleModal, setShowScheduleModal] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState<MaintenanceSchedule | null>(null)
   const [saving, setSaving] = useState(false)
   const [filterVehicle, setFilterVehicle] = useState<string>('')
-  const [showMarkDoneModal, setShowMarkDoneModal] = useState<MaintenanceSchedule | null>(null)
+  
+  // Pour la modale d'ajout d'entretien (composant partagé)
+  const [showMaintenanceModal, setShowMaintenanceModal] = useState(false)
+  const [scheduleForMaintenance, setScheduleForMaintenance] = useState<MaintenanceSchedule | null>(null)
 
-  const [form, setForm] = useState<Partial<MaintenanceScheduleInsert>>({
+  const [scheduleForm, setScheduleForm] = useState<Partial<MaintenanceScheduleInsert>>({
     vehicle_id: '',
     maintenance_type: 'oil_change',
     name: '',
@@ -45,11 +54,6 @@ export function MaintenanceSchedulePage() {
     last_done_date: '',
     last_done_mileage: undefined,
     notes: ''
-  })
-
-  const [markDoneForm, setMarkDoneForm] = useState({
-    date: new Date().toISOString().split('T')[0],
-    mileage: 0
   })
 
   useEffect(() => {
@@ -71,8 +75,8 @@ export function MaintenanceSchedulePage() {
       setVehicles(vehiclesData)
       setSchedules(schedulesData)
       
-      if (vehiclesData.length > 0 && !form.vehicle_id) {
-        setForm(f => ({ ...f, vehicle_id: vehiclesData[0].id }))
+      if (vehiclesData.length > 0 && !scheduleForm.vehicle_id) {
+        setScheduleForm(f => ({ ...f, vehicle_id: vehiclesData[0].id }))
       }
     } catch (error) {
       console.error('Error loading data:', error)
@@ -103,10 +107,10 @@ export function MaintenanceSchedulePage() {
     setStatuses(newStatuses)
   }
 
-  const openModal = (schedule?: MaintenanceSchedule) => {
+  const openScheduleModal = (schedule?: MaintenanceSchedule) => {
     if (schedule) {
       setEditingSchedule(schedule)
-      setForm({
+      setScheduleForm({
         vehicle_id: schedule.vehicle_id,
         maintenance_type: schedule.maintenance_type,
         name: schedule.name,
@@ -118,7 +122,7 @@ export function MaintenanceSchedulePage() {
       })
     } else {
       setEditingSchedule(null)
-      setForm({
+      setScheduleForm({
         vehicle_id: filterVehicle || vehicles[0]?.id || '',
         maintenance_type: 'oil_change',
         name: '',
@@ -129,19 +133,19 @@ export function MaintenanceSchedulePage() {
         notes: ''
       })
     }
-    setShowModal(true)
+    setShowScheduleModal(true)
   }
 
-  const closeModal = () => {
-    setShowModal(false)
+  const closeScheduleModal = () => {
+    setShowScheduleModal(false)
     setEditingSchedule(null)
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleScheduleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) return
 
-    if (!form.interval_km && !form.interval_months) {
+    if (!scheduleForm.interval_km && !scheduleForm.interval_months) {
       alert('Vous devez spécifier au moins un intervalle (kilométrage ou mois)')
       return
     }
@@ -149,12 +153,12 @@ export function MaintenanceSchedulePage() {
     setSaving(true)
     try {
       const scheduleData = {
-        ...form,
+        ...scheduleForm,
         user_id: user.id,
-        interval_km: form.interval_km || null,
-        interval_months: form.interval_months || null,
-        last_done_date: form.last_done_date || null,
-        last_done_mileage: form.last_done_mileage || null
+        interval_km: scheduleForm.interval_km || null,
+        interval_months: scheduleForm.interval_months || null,
+        last_done_date: scheduleForm.last_done_date || null,
+        last_done_mileage: scheduleForm.last_done_mileage || null
       }
 
       if (editingSchedule) {
@@ -164,7 +168,7 @@ export function MaintenanceSchedulePage() {
       }
       
       await loadData()
-      closeModal()
+      closeScheduleModal()
     } catch (error) {
       console.error('Error saving schedule:', error)
     } finally {
@@ -195,36 +199,15 @@ export function MaintenanceSchedulePage() {
     }
   }
 
-  const openMarkDoneModal = (schedule: MaintenanceSchedule) => {
-    const vehicle = vehicles.find(v => v.id === schedule.vehicle_id)
-    setMarkDoneForm({
-      date: new Date().toISOString().split('T')[0],
-      mileage: vehicle?.current_mileage || 0
-    })
-    setShowMarkDoneModal(schedule)
+  // Ouvrir la modale partagée d'ajout d'entretien
+  const openMaintenanceModal = (schedule: MaintenanceSchedule) => {
+    setScheduleForMaintenance(schedule)
+    setShowMaintenanceModal(true)
   }
 
-  const handleMarkDone = async () => {
-    if (!showMarkDoneModal) return
-    
-    try {
-      await maintenanceScheduleService.markAsDone(
-        showMarkDoneModal.id,
-        markDoneForm.date,
-        markDoneForm.mileage
-      )
-      
-      // Mettre à jour le kilométrage du véhicule
-      const vehicle = vehicles.find(v => v.id === showMarkDoneModal.vehicle_id)
-      if (vehicle && markDoneForm.mileage > vehicle.current_mileage) {
-        await vehicleService.updateMileage(vehicle.id, markDoneForm.mileage)
-      }
-      
-      setShowMarkDoneModal(null)
-      await loadData()
-    } catch (error) {
-      console.error('Error marking as done:', error)
-    }
+  const closeMaintenanceModal = () => {
+    setShowMaintenanceModal(false)
+    setScheduleForMaintenance(null)
   }
 
   const getTypeLabel = (value: string) => {
@@ -316,7 +299,7 @@ export function MaintenanceSchedulePage() {
               Créer défauts
             </button>
           )}
-          <button onClick={() => openModal()} className="btn btn-primary flex items-center gap-2">
+          <button onClick={() => openScheduleModal()} className="btn btn-primary flex items-center gap-2">
             <Plus className="w-4 h-4" />
             Ajouter
           </button>
@@ -383,7 +366,7 @@ export function MaintenanceSchedulePage() {
                 Utiliser les valeurs par défaut
               </button>
             )}
-            <button onClick={() => openModal()} className="btn btn-primary inline-flex items-center gap-2">
+            <button onClick={() => openScheduleModal()} className="btn btn-primary inline-flex items-center gap-2">
               <Plus className="w-4 h-4" />
               Créer manuellement
             </button>
@@ -472,21 +455,24 @@ export function MaintenanceSchedulePage() {
                   
                   <div className="flex gap-2 sm:flex-col">
                     <button
-                      onClick={() => openMarkDoneModal(schedule)}
+                      onClick={() => openMaintenanceModal(schedule)}
                       className="btn btn-success flex items-center gap-2"
+                      title="Ajouter un entretien effectué"
                     >
-                      <Check className="w-4 h-4" />
-                      Fait
+                      <Plus className="w-4 h-4" />
+                      Ajouter
                     </button>
                     <button
-                      onClick={() => openModal(schedule)}
+                      onClick={() => openScheduleModal(schedule)}
                       className="btn btn-secondary flex items-center gap-2"
+                      title="Modifier le calendrier"
                     >
                       <Edit className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDelete(schedule.id)}
                       className="btn btn-danger flex items-center gap-2"
+                      title="Supprimer"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -498,26 +484,26 @@ export function MaintenanceSchedulePage() {
         </div>
       )}
 
-      {/* Modal création/édition */}
-      {showModal && (
+      {/* Modal création/édition de calendrier */}
+      {showScheduleModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b">
               <h2 className="text-xl font-semibold">
                 {editingSchedule ? 'Modifier le calendrier' : 'Nouveau calendrier d\'entretien'}
               </h2>
-              <button onClick={closeModal} className="p-2 hover:bg-gray-100 rounded-lg">
+              <button onClick={closeScheduleModal} className="p-2 hover:bg-gray-100 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleScheduleSubmit} className="p-6 space-y-4">
               <div>
                 <label className="label">Véhicule *</label>
                 <select
                   className="input"
-                  value={form.vehicle_id}
-                  onChange={(e) => setForm({ ...form, vehicle_id: e.target.value })}
+                  value={scheduleForm.vehicle_id}
+                  onChange={(e) => setScheduleForm({ ...scheduleForm, vehicle_id: e.target.value })}
                   required
                 >
                   {vehicles.map((v) => (
@@ -533,8 +519,8 @@ export function MaintenanceSchedulePage() {
                   <label className="label">Type d'entretien *</label>
                   <select
                     className="input"
-                    value={form.maintenance_type}
-                    onChange={(e) => setForm({ ...form, maintenance_type: e.target.value })}
+                    value={scheduleForm.maintenance_type}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, maintenance_type: e.target.value })}
                     required
                   >
                     {MAINTENANCE_TYPES.map((type) => (
@@ -549,8 +535,8 @@ export function MaintenanceSchedulePage() {
                   <input
                     type="text"
                     className="input"
-                    value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    value={scheduleForm.name}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, name: e.target.value })}
                     required
                     placeholder="Ex: Vidange huile moteur"
                   />
@@ -563,8 +549,8 @@ export function MaintenanceSchedulePage() {
                   <input
                     type="number"
                     className="input"
-                    value={form.interval_km || ''}
-                    onChange={(e) => setForm({ ...form, interval_km: parseInt(e.target.value) || undefined })}
+                    value={scheduleForm.interval_km || ''}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, interval_km: parseInt(e.target.value) || undefined })}
                     min="0"
                     placeholder="Ex: 15000"
                   />
@@ -574,8 +560,8 @@ export function MaintenanceSchedulePage() {
                   <input
                     type="number"
                     className="input"
-                    value={form.interval_months || ''}
-                    onChange={(e) => setForm({ ...form, interval_months: parseInt(e.target.value) || undefined })}
+                    value={scheduleForm.interval_months || ''}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, interval_months: parseInt(e.target.value) || undefined })}
                     min="0"
                     placeholder="Ex: 12"
                   />
@@ -592,8 +578,8 @@ export function MaintenanceSchedulePage() {
                   <input
                     type="date"
                     className="input"
-                    value={form.last_done_date || ''}
-                    onChange={(e) => setForm({ ...form, last_done_date: e.target.value })}
+                    value={scheduleForm.last_done_date || ''}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, last_done_date: e.target.value })}
                   />
                 </div>
                 <div>
@@ -601,8 +587,8 @@ export function MaintenanceSchedulePage() {
                   <input
                     type="number"
                     className="input"
-                    value={form.last_done_mileage || ''}
-                    onChange={(e) => setForm({ ...form, last_done_mileage: parseInt(e.target.value) || undefined })}
+                    value={scheduleForm.last_done_mileage || ''}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, last_done_mileage: parseInt(e.target.value) || undefined })}
                     min="0"
                   />
                 </div>
@@ -613,14 +599,14 @@ export function MaintenanceSchedulePage() {
                 <textarea
                   className="input"
                   rows={2}
-                  value={form.notes || ''}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  value={scheduleForm.notes || ''}
+                  onChange={(e) => setScheduleForm({ ...scheduleForm, notes: e.target.value })}
                   placeholder="Informations complémentaires..."
                 />
               </div>
 
               <div className="flex gap-3 pt-4">
-                <button type="button" onClick={closeModal} className="btn btn-secondary flex-1">
+                <button type="button" onClick={closeScheduleModal} className="btn btn-secondary flex-1">
                   Annuler
                 </button>
                 <button type="submit" disabled={saving} className="btn btn-primary flex-1 flex items-center justify-center gap-2">
@@ -633,64 +619,16 @@ export function MaintenanceSchedulePage() {
         </div>
       )}
 
-      {/* Modal "Marquer comme fait" */}
-      {showMarkDoneModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-            <div className="flex items-center justify-between p-6 border-b">
-              <h2 className="text-xl font-semibold">Marquer comme effectué</h2>
-              <button onClick={() => setShowMarkDoneModal(null)} className="p-2 hover:bg-gray-100 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <p className="text-gray-600">
-                Enregistrer <strong>{showMarkDoneModal.name}</strong> comme effectué :
-              </p>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Date *</label>
-                  <input
-                    type="date"
-                    className="input"
-                    value={markDoneForm.date}
-                    onChange={(e) => setMarkDoneForm({ ...markDoneForm, date: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="label">Kilométrage *</label>
-                  <input
-                    type="number"
-                    className="input"
-                    value={markDoneForm.mileage}
-                    onChange={(e) => setMarkDoneForm({ ...markDoneForm, mileage: parseInt(e.target.value) || 0 })}
-                    required
-                    min="0"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button 
-                  onClick={() => setShowMarkDoneModal(null)} 
-                  className="btn btn-secondary flex-1"
-                >
-                  Annuler
-                </button>
-                <button 
-                  onClick={handleMarkDone} 
-                  className="btn btn-success flex-1 flex items-center justify-center gap-2"
-                >
-                  <Check className="w-4 h-4" />
-                  Confirmer
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Modal partagée d'ajout d'entretien */}
+      {user && (
+        <MaintenanceModal
+          isOpen={showMaintenanceModal}
+          onClose={closeMaintenanceModal}
+          onSaved={loadData}
+          vehicles={vehicles}
+          userId={user.id}
+          linkedSchedule={scheduleForMaintenance}
+        />
       )}
     </div>
   )

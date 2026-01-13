@@ -2,14 +2,13 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { vehicleService } from '../lib/vehicles.service'
 import { maintenanceService, MAINTENANCE_TYPES } from '../lib/maintenance.service'
-import type { Vehicle, MaintenanceRecord, MaintenanceRecordInsert } from '../lib/database.types'
+import { MaintenanceModal } from '../components/MaintenanceModal'
+import type { Vehicle, MaintenanceRecord } from '../lib/database.types'
 import { 
   Wrench, 
   Plus, 
   Edit, 
   Trash2, 
-  X,
-  Loader2,
   Calendar,
   Gauge,
   Euro,
@@ -24,20 +23,7 @@ export function MaintenancePage() {
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editingRecord, setEditingRecord] = useState<MaintenanceRecord | null>(null)
-  const [saving, setSaving] = useState(false)
   const [filterVehicle, setFilterVehicle] = useState<string>('')
-
-  const [form, setForm] = useState<Partial<MaintenanceRecordInsert>>({
-    vehicle_id: '',
-    type: 'oil_change',
-    description: '',
-    date: new Date().toISOString().split('T')[0],
-    mileage: 0,
-    cost: 0,
-    garage_name: '',
-    garage_address: '',
-    notes: ''
-  })
 
   useEffect(() => {
     if (user) {
@@ -55,10 +41,6 @@ export function MaintenancePage() {
       ])
       setVehicles(vehiclesData)
       setRecords(recordsData)
-      
-      if (vehiclesData.length > 0 && !form.vehicle_id) {
-        setForm(f => ({ ...f, vehicle_id: vehiclesData[0].id }))
-      }
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -67,70 +49,13 @@ export function MaintenancePage() {
   }
 
   const openModal = (record?: MaintenanceRecord) => {
-    if (record) {
-      setEditingRecord(record)
-      setForm({
-        vehicle_id: record.vehicle_id,
-        type: record.type,
-        description: record.description,
-        date: record.date,
-        mileage: record.mileage,
-        cost: record.cost,
-        garage_name: record.garage_name || '',
-        garage_address: record.garage_address || '',
-        notes: record.notes || ''
-      })
-    } else {
-      setEditingRecord(null)
-      const selectedVehicle = vehicles.find(v => v.id === filterVehicle) || vehicles[0]
-      setForm({
-        vehicle_id: filterVehicle || vehicles[0]?.id || '',
-        type: 'oil_change',
-        description: '',
-        date: new Date().toISOString().split('T')[0],
-        mileage: selectedVehicle?.current_mileage || 0,
-        cost: 0,
-        garage_name: '',
-        garage_address: '',
-        notes: ''
-      })
-    }
+    setEditingRecord(record || null)
     setShowModal(true)
   }
 
   const closeModal = () => {
     setShowModal(false)
     setEditingRecord(null)
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!user) return
-
-    setSaving(true)
-    try {
-      if (editingRecord) {
-        await maintenanceService.update(editingRecord.id, form)
-      } else {
-        await maintenanceService.create({
-          ...form as MaintenanceRecordInsert,
-          user_id: user.id
-        })
-      }
-      
-      // Update vehicle mileage if this is the highest
-      const vehicle = vehicles.find(v => v.id === form.vehicle_id)
-      if (vehicle && form.mileage && form.mileage > vehicle.current_mileage) {
-        await vehicleService.updateMileage(vehicle.id, form.mileage)
-      }
-      
-      await loadData()
-      closeModal()
-    } catch (error) {
-      console.error('Error saving record:', error)
-    } finally {
-      setSaving(false)
-    }
   }
 
   const handleDelete = async (id: string) => {
@@ -300,155 +225,17 @@ export function MaintenancePage() {
         </div>
       )}
 
-      {/* Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-6 border-b">
-              <h2 className="text-xl font-semibold">
-                {editingRecord ? 'Modifier l\'entretien' : 'Nouvel entretien'}
-              </h2>
-              <button onClick={closeModal} className="p-2 hover:bg-gray-100 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div>
-                <label className="label">Véhicule *</label>
-                <select
-                  className="input"
-                  value={form.vehicle_id}
-                  onChange={(e) => {
-                    const vehicle = vehicles.find(v => v.id === e.target.value)
-                    setForm({ 
-                      ...form, 
-                      vehicle_id: e.target.value,
-                      mileage: vehicle?.current_mileage || form.mileage 
-                    })
-                  }}
-                  required
-                >
-                  {vehicles.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.brand} {v.model} ({v.license_plate})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Type d'entretien *</label>
-                  <select
-                    className="input"
-                    value={form.type}
-                    onChange={(e) => setForm({ ...form, type: e.target.value })}
-                    required
-                  >
-                    {MAINTENANCE_TYPES.map((type) => (
-                      <option key={type.value} value={type.value}>
-                        {type.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="label">Date *</label>
-                  <input
-                    type="date"
-                    className="input"
-                    value={form.date}
-                    onChange={(e) => setForm({ ...form, date: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="label">Description *</label>
-                <input
-                  type="text"
-                  className="input"
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  required
-                  placeholder="Ex: Vidange huile + filtre"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Kilométrage *</label>
-                  <input
-                    type="number"
-                    className="input"
-                    value={form.mileage}
-                    onChange={(e) => setForm({ ...form, mileage: parseInt(e.target.value) || 0 })}
-                    required
-                    min="0"
-                  />
-                </div>
-                <div>
-                  <label className="label">Coût (€) *</label>
-                  <input
-                    type="number"
-                    className="input"
-                    value={form.cost}
-                    onChange={(e) => setForm({ ...form, cost: parseFloat(e.target.value) || 0 })}
-                    required
-                    min="0"
-                    step="0.01"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Nom du garage</label>
-                  <input
-                    type="text"
-                    className="input"
-                    value={form.garage_name || ''}
-                    onChange={(e) => setForm({ ...form, garage_name: e.target.value })}
-                    placeholder="Optionnel"
-                  />
-                </div>
-                <div>
-                  <label className="label">Adresse du garage</label>
-                  <input
-                    type="text"
-                    className="input"
-                    value={form.garage_address || ''}
-                    onChange={(e) => setForm({ ...form, garage_address: e.target.value })}
-                    placeholder="Optionnel"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="label">Notes</label>
-                <textarea
-                  className="input"
-                  rows={3}
-                  value={form.notes || ''}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                  placeholder="Informations complémentaires..."
-                />
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button type="button" onClick={closeModal} className="btn btn-secondary flex-1">
-                  Annuler
-                </button>
-                <button type="submit" disabled={saving} className="btn btn-primary flex-1 flex items-center justify-center gap-2">
-                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {editingRecord ? 'Enregistrer' : 'Ajouter'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* Modal partagée */}
+      {user && (
+        <MaintenanceModal
+          isOpen={showModal}
+          onClose={closeModal}
+          onSaved={loadData}
+          vehicles={vehicles}
+          userId={user.id}
+          editingRecord={editingRecord}
+          preselectedVehicleId={filterVehicle}
+        />
       )}
     </div>
   )
