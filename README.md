@@ -6,9 +6,11 @@ Carnet d'entretien automobile complet - Application web moderne construite avec 
 
 - **🚗 Gestion des véhicules** : Ajoutez et gérez plusieurs véhicules avec leurs informations complètes
 - **🔧 Suivi des entretiens** : Enregistrez tous les entretiens (vidange, freins, pneus, etc.) avec leur coût
+- **🏪 Visites garage groupées** : Enregistrez une visite au garage avec plusieurs prestations d'un seul coup
+- **📅 Calendrier d'entretien** : Planifiez vos entretiens avec intervalles personnalisés (km ou mois) et suivez leur état (à jour, à faire bientôt, en retard)
 - **⛽ Suivi du carburant** : Enregistrez vos pleins et calculez votre consommation moyenne
 - **🔔 Rappels** : Créez des rappels pour ne jamais oublier un entretien important
-- **📊 Tableau de bord** : Vue d'ensemble de vos véhicules et dépenses
+- **📊 Tableau de bord** : Vue d'ensemble de vos véhicules, dépenses et entretiens à prévoir
 - **🔐 Authentification** : Connexion sécurisée via Supabase Auth
 
 ## Technologies
@@ -38,7 +40,9 @@ npm install
 ### 2. Configurer Supabase
 
 1. Créez un nouveau projet sur [supabase.com](https://supabase.com)
-2. Allez dans **SQL Editor** et exécutez le script `supabase/schema.sql`
+2. Allez dans **SQL Editor** et exécutez les scripts :
+   - `supabase/schema.sql` (schéma de base)
+   - `supabase/schema_v2.sql` (fonctionnalités avancées : visites garage et calendrier)
 3. Récupérez vos clés dans **Settings > API** :
    - Project URL
    - anon/public key

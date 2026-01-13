@@ -76,6 +76,7 @@ export interface Database {
           garage_address: string | null
           invoice_url: string | null
           notes: string | null
+          visit_id: string | null
           created_at: string
           updated_at: string
         }
@@ -92,6 +93,7 @@ export interface Database {
           garage_address?: string | null
           invoice_url?: string | null
           notes?: string | null
+          visit_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -108,6 +110,7 @@ export interface Database {
           garage_address?: string | null
           invoice_url?: string | null
           notes?: string | null
+          visit_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -200,6 +203,100 @@ export interface Database {
           created_at?: string
         }
       }
+      garage_visits: {
+        Row: {
+          id: string
+          vehicle_id: string
+          user_id: string
+          date: string
+          mileage: number
+          garage_name: string | null
+          garage_address: string | null
+          total_cost: number
+          invoice_number: string | null
+          invoice_url: string | null
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          vehicle_id: string
+          user_id: string
+          date: string
+          mileage: number
+          garage_name?: string | null
+          garage_address?: string | null
+          total_cost?: number
+          invoice_number?: string | null
+          invoice_url?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          vehicle_id?: string
+          user_id?: string
+          date?: string
+          mileage?: number
+          garage_name?: string | null
+          garage_address?: string | null
+          total_cost?: number
+          invoice_number?: string | null
+          invoice_url?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      maintenance_schedules: {
+        Row: {
+          id: string
+          vehicle_id: string
+          user_id: string
+          maintenance_type: string
+          name: string
+          interval_km: number | null
+          interval_months: number | null
+          last_done_date: string | null
+          last_done_mileage: number | null
+          is_active: boolean
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          vehicle_id: string
+          user_id: string
+          maintenance_type: string
+          name: string
+          interval_km?: number | null
+          interval_months?: number | null
+          last_done_date?: string | null
+          last_done_mileage?: number | null
+          is_active?: boolean
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          vehicle_id?: string
+          user_id?: string
+          maintenance_type?: string
+          name?: string
+          interval_km?: number | null
+          interval_months?: number | null
+          last_done_date?: string | null
+          last_done_mileage?: number | null
+          is_active?: boolean
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -229,3 +326,26 @@ export type ReminderUpdate = Database['public']['Tables']['reminders']['Update']
 export type FuelLog = Database['public']['Tables']['fuel_logs']['Row']
 export type FuelLogInsert = Database['public']['Tables']['fuel_logs']['Insert']
 export type FuelLogUpdate = Database['public']['Tables']['fuel_logs']['Update']
+
+export type GarageVisit = Database['public']['Tables']['garage_visits']['Row']
+export type GarageVisitInsert = Database['public']['Tables']['garage_visits']['Insert']
+export type GarageVisitUpdate = Database['public']['Tables']['garage_visits']['Update']
+
+export type MaintenanceSchedule = Database['public']['Tables']['maintenance_schedules']['Row']
+export type MaintenanceScheduleInsert = Database['public']['Tables']['maintenance_schedules']['Insert']
+export type MaintenanceScheduleUpdate = Database['public']['Tables']['maintenance_schedules']['Update']
+
+// Type pour une visite avec ses prestations
+export interface GarageVisitWithItems extends GarageVisit {
+  items: MaintenanceRecord[]
+}
+
+// Type pour le statut d'un entretien planifié
+export interface MaintenanceStatus {
+  schedule: MaintenanceSchedule
+  status: 'ok' | 'due_soon' | 'overdue'
+  nextDueDate: string | null
+  nextDueMileage: number | null
+  daysUntilDue: number | null
+  kmUntilDue: number | null
+}

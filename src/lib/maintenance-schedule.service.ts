@@ -1,0 +1,252 @@
+import { supabase } from './supabase'
+import type { 
+  MaintenanceSchedule, 
+  MaintenanceScheduleInsert, 
+  MaintenanceScheduleUpdate,
+  MaintenanceStatus,
+  Vehicle
+} from './database.types'
+
+export const maintenanceScheduleService = {
+  async getAll(userId: string): Promise<MaintenanceSchedule[]> {
+    const { data, error } = await supabase
+      .from('maintenance_schedules')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .order('maintenance_type', { ascending: true })
+    
+    if (error) throw error
+    return data || []
+  },
+
+  async getByVehicle(vehicleId: string): Promise<MaintenanceSchedule[]> {
+    const { data, error } = await supabase
+      .from('maintenance_schedules')
+      .select('*')
+      .eq('vehicle_id', vehicleId)
+      .eq('is_active', true)
+      .order('maintenance_type', { ascending: true })
+    
+    if (error) throw error
+    return data || []
+  },
+
+  async getById(id: string): Promise<MaintenanceSchedule | null> {
+    const { data, error } = await supabase
+      .from('maintenance_schedules')
+      .select('*')
+      .eq('id', id)
+      .single()
+    
+    if (error) throw error
+    return data
+  },
+
+  async create(schedule: MaintenanceScheduleInsert): Promise<MaintenanceSchedule> {
+    const { data, error } = await supabase
+      .from('maintenance_schedules')
+      .insert(schedule)
+      .select()
+      .single()
+    
+    if (error) throw error
+    return data
+  },
+
+  async update(id: string, updates: MaintenanceScheduleUpdate): Promise<MaintenanceSchedule> {
+    const { data, error } = await supabase
+      .from('maintenance_schedules')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single()
+    
+    if (error) throw error
+    return data
+  },
+
+  async delete(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('maintenance_schedules')
+      .delete()
+      .eq('id', id)
+    
+    if (error) throw error
+  },
+
+  /**
+   * Marque un entretien comme effectué
+   */
+  async markAsDone(id: string, date: string, mileage: number): Promise<MaintenanceSchedule> {
+    return this.update(id, {
+      last_done_date: date,
+      last_done_mileage: mileage
+    })
+  },
+
+  /**
+   * Calcule le statut d'un calendrier d'entretien
+   */
+  calculateStatus(schedule: MaintenanceSchedule, vehicle: Vehicle): MaintenanceStatus {
+    const today = new Date()
+    const currentMileage = vehicle.current_mileage
+    
+    let nextDueDate: string | null = null
+    let nextDueMileage: number | null = null
+    let daysUntilDue: number | null = null
+    let kmUntilDue: number | null = null
+    let status: 'ok' | 'due_soon' | 'overdue' = 'ok'
+
+    // Calcul par kilométrage
+    if (schedule.interval_km && schedule.last_done_mileage !== null) {
+      nextDueMileage = schedule.last_done_mileage + schedule.interval_km
+      kmUntilDue = nextDueMileage - currentMileage
+      
+      if (kmUntilDue <= 0) {
+        status = 'overdue'
+      } else if (kmUntilDue <= schedule.interval_km * 0.1) { // 10% avant échéance
+        status = 'due_soon'
+      }
+    }
+
+    // Calcul par date
+    if (schedule.interval_months && schedule.last_done_date) {
+      const lastDate = new Date(schedule.last_done_date)
+      const dueDate = new Date(lastDate)
+      dueDate.setMonth(dueDate.getMonth() + schedule.interval_months)
+      nextDueDate = dueDate.toISOString().split('T')[0]
+      
+      const timeDiff = dueDate.getTime() - today.getTime()
+      daysUntilDue = Math.ceil(timeDiff / (1000 * 60 * 60 * 24))
+      
+      if (daysUntilDue <= 0) {
+        status = 'overdue'
+      } else if (daysUntilDue <= 30) { // 30 jours avant échéance
+        if (status !== 'overdue') status = 'due_soon'
+      }
+    }
+
+    // Si jamais fait, considérer comme à faire bientôt
+    if (schedule.last_done_date === null && schedule.last_done_mileage === null) {
+      status = 'due_soon'
+    }
+
+    return {
+      schedule,
+      status,
+      nextDueDate,
+      nextDueMileage,
+      daysUntilDue,
+      kmUntilDue
+    }
+  },
+
+  /**
+   * Obtient le statut de tous les entretiens d'un véhicule
+   */
+  async getVehicleMaintenanceStatus(vehicle: Vehicle): Promise<MaintenanceStatus[]> {
+    const schedules = await this.getByVehicle(vehicle.id)
+    return schedules.map(schedule => this.calculateStatus(schedule, vehicle))
+  },
+
+  /**
+   * Crée les calendriers d'entretien par défaut pour un nouveau véhicule
+   */
+  async createDefaultSchedules(vehicleId: string, userId: string): Promise<MaintenanceSchedule[]> {
+    const defaults = DEFAULT_MAINTENANCE_SCHEDULES.map(schedule => ({
+      ...schedule,
+      vehicle_id: vehicleId,
+      user_id: userId
+    }))
+
+    const { data, error } = await supabase
+      .from('maintenance_schedules')
+      .insert(defaults)
+      .select()
+    
+    if (error) throw error
+    return data || []
+  }
+}
+
+// Calendriers d'entretien par défaut (valeurs courantes)
+export const DEFAULT_MAINTENANCE_SCHEDULES: Omit<MaintenanceScheduleInsert, 'vehicle_id' | 'user_id'>[] = [
+  {
+    maintenance_type: 'oil_change',
+    name: 'Vidange huile moteur',
+    interval_km: 15000,
+    interval_months: 12,
+    notes: 'Inclut le remplacement du filtre à huile'
+  },
+  {
+    maintenance_type: 'filters',
+    name: 'Filtre à air',
+    interval_km: 30000,
+    interval_months: 24,
+    notes: 'À vérifier plus souvent en environnement poussiéreux'
+  },
+  {
+    maintenance_type: 'filters',
+    name: 'Filtre habitacle',
+    interval_km: 20000,
+    interval_months: 12,
+    notes: 'Filtre pollen / climatisation'
+  },
+  {
+    maintenance_type: 'brake_service',
+    name: 'Plaquettes de frein avant',
+    interval_km: 30000,
+    interval_months: null,
+    notes: 'Vérifier l\'usure régulièrement'
+  },
+  {
+    maintenance_type: 'brake_service',
+    name: 'Liquide de frein',
+    interval_km: null,
+    interval_months: 24,
+    notes: 'Remplacement tous les 2 ans'
+  },
+  {
+    maintenance_type: 'cooling',
+    name: 'Liquide de refroidissement',
+    interval_km: 60000,
+    interval_months: 48,
+    notes: 'Vérifier le niveau régulièrement'
+  },
+  {
+    maintenance_type: 'timing_belt',
+    name: 'Courroie de distribution',
+    interval_km: 120000,
+    interval_months: 60,
+    notes: 'Critique - À ne pas dépasser'
+  },
+  {
+    maintenance_type: 'spark_plugs',
+    name: 'Bougies d\'allumage',
+    interval_km: 60000,
+    interval_months: null,
+    notes: 'Moteurs essence uniquement'
+  },
+  {
+    maintenance_type: 'tire_change',
+    name: 'Rotation des pneus',
+    interval_km: 10000,
+    interval_months: null,
+    notes: 'Pour usure uniforme'
+  },
+  {
+    maintenance_type: 'inspection',
+    name: 'Contrôle technique',
+    interval_km: null,
+    interval_months: 24,
+    notes: 'Obligatoire - Véhicules de plus de 4 ans'
+  }
+]
+
+// Labels pour les statuts
+export const MAINTENANCE_STATUS_LABELS = {
+  ok: { label: 'À jour', color: 'badge-success', icon: '✓' },
+  due_soon: { label: 'À faire bientôt', color: 'badge-warning', icon: '⚠' },
+  overdue: { label: 'En retard', color: 'badge-danger', icon: '✗' }
+}

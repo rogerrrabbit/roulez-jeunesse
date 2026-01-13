@@ -7,7 +7,9 @@ import {
   Fuel, 
   LogOut,
   Menu,
-  X
+  X,
+  Building2,
+  CalendarCheck
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
@@ -15,7 +17,9 @@ import { useAuth } from '../contexts/AuthContext'
 const navigation = [
   { name: 'Tableau de bord', href: '/', icon: LayoutDashboard },
   { name: 'Véhicules', href: '/vehicles', icon: Car },
+  { name: 'Visites garage', href: '/garage-visits', icon: Building2 },
   { name: 'Entretiens', href: '/maintenance', icon: Wrench },
+  { name: 'Calendrier', href: '/schedules', icon: CalendarCheck },
   { name: 'Rappels', href: '/reminders', icon: Bell },
   { name: 'Carburant', href: '/fuel', icon: Fuel },
 ]

@@ -5,7 +5,8 @@ import { vehicleService } from '../lib/vehicles.service'
 import { maintenanceService } from '../lib/maintenance.service'
 import { reminderService } from '../lib/reminders.service'
 import { fuelService } from '../lib/fuel.service'
-import type { Vehicle, MaintenanceRecord, Reminder, FuelLog } from '../lib/database.types'
+import { maintenanceScheduleService, MAINTENANCE_STATUS_LABELS } from '../lib/maintenance-schedule.service'
+import type { Vehicle, MaintenanceRecord, Reminder, FuelLog, MaintenanceStatus } from '../lib/database.types'
 import { 
   Car, 
   Wrench, 
@@ -15,7 +16,11 @@ import {
   AlertCircle,
   Plus,
   ArrowRight,
-  Euro
+  Euro,
+  AlertTriangle,
+  Check,
+  Clock,
+  CalendarCheck
 } from 'lucide-react'
 
 export function DashboardPage() {
@@ -24,12 +29,15 @@ export function DashboardPage() {
   const [recentMaintenance, setRecentMaintenance] = useState<MaintenanceRecord[]>([])
   const [upcomingReminders, setUpcomingReminders] = useState<Reminder[]>([])
   const [recentFuel, setRecentFuel] = useState<FuelLog[]>([])
+  const [maintenanceStatuses, setMaintenanceStatuses] = useState<MaintenanceStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
     totalVehicles: 0,
     totalMaintenance: 0,
     totalSpent: 0,
-    pendingReminders: 0
+    pendingReminders: 0,
+    overdueSchedules: 0,
+    dueSoonSchedules: 0
   })
 
   useEffect(() => {
@@ -42,17 +50,37 @@ export function DashboardPage() {
     if (!user) return
     setLoading(true)
     try {
-      const [vehiclesData, maintenanceData, remindersData, fuelData] = await Promise.all([
+      const [vehiclesData, maintenanceData, remindersData, fuelData, schedulesData] = await Promise.all([
         vehicleService.getAll(user.id),
         maintenanceService.getAll(user.id),
         reminderService.getUpcoming(user.id, 30),
-        fuelService.getAll(user.id)
+        fuelService.getAll(user.id),
+        maintenanceScheduleService.getAll(user.id)
       ])
 
       setVehicles(vehiclesData)
       setRecentMaintenance(maintenanceData.slice(0, 5))
       setUpcomingReminders(remindersData.slice(0, 5))
       setRecentFuel(fuelData.slice(0, 5))
+
+      // Calculer les statuts d'entretien
+      const statuses: MaintenanceStatus[] = []
+      for (const schedule of schedulesData) {
+        const vehicle = vehiclesData.find(v => v.id === schedule.vehicle_id)
+        if (vehicle) {
+          statuses.push(maintenanceScheduleService.calculateStatus(schedule, vehicle))
+        }
+      }
+      
+      // Trier: overdue d'abord, puis due_soon
+      statuses.sort((a, b) => {
+        const order = { overdue: 0, due_soon: 1, ok: 2 }
+        return order[a.status] - order[b.status]
+      })
+      
+      // Garder seulement les entretiens à faire (overdue + due_soon)
+      const urgentStatuses = statuses.filter(s => s.status !== 'ok').slice(0, 5)
+      setMaintenanceStatuses(urgentStatuses)
 
       const totalMaintenanceCost = maintenanceData.reduce((sum, m) => sum + m.cost, 0)
       const totalFuelCost = fuelData.reduce((sum, f) => sum + f.total_cost, 0)
@@ -61,7 +89,9 @@ export function DashboardPage() {
         totalVehicles: vehiclesData.length,
         totalMaintenance: maintenanceData.length,
         totalSpent: totalMaintenanceCost + totalFuelCost,
-        pendingReminders: remindersData.filter(r => !r.is_completed).length
+        pendingReminders: remindersData.filter(r => !r.is_completed).length,
+        overdueSchedules: statuses.filter(s => s.status === 'overdue').length,
+        dueSoonSchedules: statuses.filter(s => s.status === 'due_soon').length
       })
     } catch (error) {
       console.error('Error loading dashboard:', error)
@@ -83,6 +113,19 @@ export function DashboardPage() {
       style: 'currency',
       currency: 'EUR'
     }).format(amount)
+  }
+
+  const getVehicleName = (vehicleId: string) => {
+    const vehicle = vehicles.find(v => v.id === vehicleId)
+    return vehicle ? `${vehicle.brand} ${vehicle.model}` : 'Véhicule inconnu'
+  }
+
+  const getStatusIcon = (status: 'ok' | 'due_soon' | 'overdue') => {
+    switch (status) {
+      case 'ok': return <Check className="w-4 h-4 text-green-600" />
+      case 'due_soon': return <Clock className="w-4 h-4 text-yellow-600" />
+      case 'overdue': return <AlertTriangle className="w-4 h-4 text-red-600" />
+    }
   }
 
   if (loading) {
@@ -127,15 +170,38 @@ export function DashboardPage() {
           </div>
         </div>
 
-        <div className="card flex items-center gap-4">
-          <div className="p-3 rounded-lg bg-purple-100">
-            <Euro className="w-6 h-6 text-purple-600" />
+        {(stats.overdueSchedules > 0 || stats.dueSoonSchedules > 0) && (
+          <div className={`card flex items-center gap-4 ${stats.overdueSchedules > 0 ? 'border-red-200 bg-red-50' : 'border-yellow-200 bg-yellow-50'}`}>
+            <div className={`p-3 rounded-lg ${stats.overdueSchedules > 0 ? 'bg-red-100' : 'bg-yellow-100'}`}>
+              <CalendarCheck className={`w-6 h-6 ${stats.overdueSchedules > 0 ? 'text-red-600' : 'text-yellow-600'}`} />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Entretiens à prévoir</p>
+              <div className="flex gap-2 items-center">
+                {stats.overdueSchedules > 0 && (
+                  <span className="text-lg font-bold text-red-600">{stats.overdueSchedules} en retard</span>
+                )}
+                {stats.dueSoonSchedules > 0 && (
+                  <span className={`text-lg font-bold ${stats.overdueSchedules > 0 ? 'text-yellow-600' : ''}`}>
+                    {stats.overdueSchedules > 0 ? ' • ' : ''}{stats.dueSoonSchedules} bientôt
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
-          <div>
-            <p className="text-sm text-gray-500">Total dépensé</p>
-            <p className="text-2xl font-bold">{formatCurrency(stats.totalSpent)}</p>
+        )}
+
+        {stats.overdueSchedules === 0 && stats.dueSoonSchedules === 0 && (
+          <div className="card flex items-center gap-4">
+            <div className="p-3 rounded-lg bg-purple-100">
+              <Euro className="w-6 h-6 text-purple-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Total dépensé</p>
+              <p className="text-2xl font-bold">{formatCurrency(stats.totalSpent)}</p>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Quick actions */}
@@ -155,6 +221,63 @@ export function DashboardPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Maintenance urgente */}
+          {maintenanceStatuses.length > 0 && (
+            <div className="card lg:col-span-2 border-yellow-200 bg-gradient-to-r from-yellow-50 to-orange-50">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-orange-600" />
+                  <h2 className="text-lg font-semibold">Entretiens à prévoir</h2>
+                </div>
+                <Link to="/schedules" className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1">
+                  Voir calendrier <ArrowRight className="w-4 h-4" />
+                </Link>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {maintenanceStatuses.map(({ schedule, status, daysUntilDue, kmUntilDue }) => {
+                  const statusConfig = MAINTENANCE_STATUS_LABELS[status]
+                  return (
+                    <div 
+                      key={schedule.id}
+                      className={`p-4 rounded-lg border ${
+                        status === 'overdue' 
+                          ? 'bg-red-50 border-red-200' 
+                          : 'bg-white border-yellow-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <span className={`badge ${statusConfig.color} text-xs`}>
+                          {statusConfig.icon} {statusConfig.label}
+                        </span>
+                        {getStatusIcon(status)}
+                      </div>
+                      <h3 className="font-medium mb-1">{schedule.name}</h3>
+                      <p className="text-sm text-gray-500 mb-2">{getVehicleName(schedule.vehicle_id)}</p>
+                      <div className="text-xs text-gray-600 space-y-1">
+                        {daysUntilDue !== null && (
+                          <p className={daysUntilDue <= 0 ? 'text-red-600 font-medium' : ''}>
+                            {daysUntilDue <= 0 
+                              ? `${Math.abs(daysUntilDue)} jours de retard`
+                              : `Dans ${daysUntilDue} jours`
+                            }
+                          </p>
+                        )}
+                        {kmUntilDue !== null && (
+                          <p className={kmUntilDue <= 0 ? 'text-red-600 font-medium' : ''}>
+                            {kmUntilDue <= 0 
+                              ? `${Math.abs(kmUntilDue).toLocaleString()} km de retard`
+                              : `Dans ${kmUntilDue.toLocaleString()} km`
+                            }
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Vehicles */}
           <div className="card">
             <div className="flex items-center justify-between mb-4">
