@@ -102,10 +102,12 @@ export const garageVisitService = {
 
   /**
    * Crée une visite avec plusieurs prestations en une seule opération
+   * @param existingRecordIds - IDs des entretiens existants à rattacher à cette visite
    */
   async createWithItems(
     visit: GarageVisitInsert, 
-    items: Omit<MaintenanceRecordInsert, 'visit_id' | 'date' | 'mileage' | 'garage_name' | 'garage_address'>[]
+    items: Omit<MaintenanceRecordInsert, 'visit_id' | 'date' | 'mileage' | 'garage_name' | 'garage_address'>[],
+    existingRecordIds: string[] = []
   ): Promise<GarageVisitWithItems> {
     // Créer la visite
     const { data: createdVisit, error: visitError } = await supabase
@@ -116,26 +118,57 @@ export const garageVisitService = {
     
     if (visitError) throw visitError
 
-    // Créer les prestations liées à la visite
-    const maintenanceRecords = items.map(item => ({
-      ...item,
-      visit_id: createdVisit.id,
-      date: visit.date,
-      mileage: visit.mileage,
-      garage_name: visit.garage_name,
-      garage_address: visit.garage_address
-    }))
+    let allItems: any[] = []
 
-    const { data: createdItems, error: itemsError } = await supabase
-      .from('maintenance_records')
-      .insert(maintenanceRecords)
-      .select()
-    
-    if (itemsError) throw itemsError
+    // Créer les nouvelles prestations liées à la visite
+    if (items.length > 0) {
+      const maintenanceRecords = items.map(item => ({
+        ...item,
+        visit_id: createdVisit.id,
+        date: visit.date,
+        mileage: visit.mileage,
+        garage_name: visit.garage_name,
+        garage_address: visit.garage_address
+      }))
+
+      const { data: createdItems, error: itemsError } = await supabase
+        .from('maintenance_records')
+        .insert(maintenanceRecords)
+        .select()
+      
+      if (itemsError) throw itemsError
+      allItems = createdItems || []
+    }
+
+    // Rattacher les entretiens existants à cette visite
+    if (existingRecordIds.length > 0) {
+      const { error: attachError } = await supabase
+        .from('maintenance_records')
+        .update({
+          visit_id: createdVisit.id,
+          date: visit.date,
+          mileage: visit.mileage,
+          garage_name: visit.garage_name,
+          garage_address: visit.garage_address,
+          updated_at: new Date().toISOString()
+        })
+        .in('id', existingRecordIds)
+      
+      if (attachError) throw attachError
+
+      // Récupérer les entretiens rattachés
+      const { data: attachedItems, error: fetchError } = await supabase
+        .from('maintenance_records')
+        .select('*')
+        .in('id', existingRecordIds)
+      
+      if (fetchError) throw fetchError
+      allItems = [...allItems, ...(attachedItems || [])]
+    }
 
     return {
       ...createdVisit,
-      items: createdItems || []
+      items: allItems
     }
   },
 

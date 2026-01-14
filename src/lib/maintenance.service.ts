@@ -73,6 +73,46 @@ export const maintenanceService = {
   },
 
   /**
+   * Récupère les entretiens d'un véhicule qui ne sont pas rattachés à une visite
+   */
+  async getWithoutVisit(vehicleId: string): Promise<MaintenanceRecord[]> {
+    const { data, error } = await supabase
+      .from('maintenance_records')
+      .select('*')
+      .eq('vehicle_id', vehicleId)
+      .is('visit_id', null)
+      .order('date', { ascending: false })
+    
+    if (error) throw error
+    return data || []
+  },
+
+  /**
+   * Rattache des entretiens existants à une visite et met à jour leurs informations
+   */
+  async attachToVisit(
+    recordIds: string[], 
+    visitId: string, 
+    visitInfo: { date: string; mileage: number; garage_name?: string | null; garage_address?: string | null }
+  ): Promise<void> {
+    if (recordIds.length === 0) return
+    
+    const { error } = await supabase
+      .from('maintenance_records')
+      .update({
+        visit_id: visitId,
+        date: visitInfo.date,
+        mileage: visitInfo.mileage,
+        garage_name: visitInfo.garage_name || null,
+        garage_address: visitInfo.garage_address || null,
+        updated_at: new Date().toISOString()
+      })
+      .in('id', recordIds)
+    
+    if (error) throw error
+  },
+
+  /**
    * Récupère le dernier entretien effectué pour un type et un véhicule donnés
    */
   async getLastByType(vehicleId: string, maintenanceType: string): Promise<MaintenanceRecord | null> {

@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { vehicleService } from '../lib/vehicles.service'
 import { garageVisitService } from '../lib/garage-visits.service'
-import { MAINTENANCE_TYPES } from '../lib/maintenance.service'
-import type { Vehicle, GarageVisitWithItems, GarageVisitInsert } from '../lib/database.types'
+import { MAINTENANCE_TYPES, maintenanceService } from '../lib/maintenance.service'
+import type { Vehicle, GarageVisitWithItems, GarageVisitInsert, MaintenanceRecord } from '../lib/database.types'
 import { 
   Wrench, 
   Plus, 
@@ -17,7 +17,9 @@ import {
   Car,
   ChevronDown,
   ChevronUp,
-  FileText
+  FileText,
+  Link,
+  Check
 } from 'lucide-react'
 
 interface MaintenanceItem {
@@ -37,6 +39,15 @@ export function GarageVisitsPage() {
   const [saving, setSaving] = useState(false)
   const [filterVehicle, setFilterVehicle] = useState<string>('')
   const [expandedVisits, setExpandedVisits] = useState<Set<string>>(new Set())
+
+  // Entretiens existants sans visite (pour rattachement)
+  const [availableRecords, setAvailableRecords] = useState<MaintenanceRecord[]>([])
+  const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set())
+  const [loadingRecords, setLoadingRecords] = useState(false)
+
+  // Modale de confirmation de suppression
+  const [deleteConfirmVisit, setDeleteConfirmVisit] = useState<GarageVisitWithItems | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const [form, setForm] = useState<Partial<GarageVisitInsert>>({
     vehicle_id: '',
@@ -77,10 +88,12 @@ export function GarageVisitsPage() {
     }
   }
 
-  const openModal = () => {
+  const openModal = async () => {
     const selectedVehicle = vehicles.find(v => v.id === filterVehicle) || vehicles[0]
+    const vehicleId = filterVehicle || vehicles[0]?.id || ''
+    
     setForm({
-      vehicle_id: filterVehicle || vehicles[0]?.id || '',
+      vehicle_id: vehicleId,
       date: new Date().toISOString().split('T')[0],
       mileage: selectedVehicle?.current_mileage || 0,
       garage_name: '',
@@ -88,14 +101,60 @@ export function GarageVisitsPage() {
       invoice_number: '',
       notes: ''
     })
-    setItems([
-      { id: crypto.randomUUID(), type: 'oil_change', description: '', cost: 0, notes: '' }
-    ])
+    setItems([])
+    setSelectedRecordIds(new Set())
     setShowModal(true)
+    
+    // Charger les entretiens existants sans visite pour ce véhicule
+    if (vehicleId) {
+      await loadAvailableRecords(vehicleId)
+    }
+  }
+
+  const loadAvailableRecords = async (vehicleId: string) => {
+    setLoadingRecords(true)
+    try {
+      const records = await maintenanceService.getWithoutVisit(vehicleId)
+      setAvailableRecords(records)
+    } catch (error) {
+      console.error('Error loading available records:', error)
+      setAvailableRecords([])
+    } finally {
+      setLoadingRecords(false)
+    }
+  }
+
+  const handleVehicleChange = async (vehicleId: string) => {
+    const vehicle = vehicles.find(v => v.id === vehicleId)
+    setForm({ 
+      ...form, 
+      vehicle_id: vehicleId,
+      mileage: vehicle?.current_mileage || form.mileage 
+    })
+    setSelectedRecordIds(new Set())
+    await loadAvailableRecords(vehicleId)
+  }
+
+  const toggleRecordSelection = (recordId: string) => {
+    const newSelected = new Set(selectedRecordIds)
+    if (newSelected.has(recordId)) {
+      newSelected.delete(recordId)
+    } else {
+      newSelected.add(recordId)
+    }
+    setSelectedRecordIds(newSelected)
+  }
+
+  const getSelectedRecordsCost = () => {
+    return availableRecords
+      .filter(r => selectedRecordIds.has(r.id))
+      .reduce((sum, r) => sum + r.cost, 0)
   }
 
   const closeModal = () => {
     setShowModal(false)
+    setSelectedRecordIds(new Set())
+    setAvailableRecords([])
   }
 
   const addItem = () => {
@@ -109,9 +168,7 @@ export function GarageVisitsPage() {
   }
 
   const removeItem = (id: string) => {
-    if (items.length > 1) {
-      setItems(items.filter(item => item.id !== id))
-    }
+    setItems(items.filter(item => item.id !== id))
   }
 
   const updateItem = (id: string, field: keyof MaintenanceItem, value: string | number) => {
@@ -121,12 +178,20 @@ export function GarageVisitsPage() {
   }
 
   const getTotalCost = () => {
-    return items.reduce((sum, item) => sum + (item.cost || 0), 0)
+    const newItemsCost = items.reduce((sum, item) => sum + (item.cost || 0), 0)
+    const selectedRecordsCost = getSelectedRecordsCost()
+    return newItemsCost + selectedRecordsCost
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) return
+
+    // Vérifier qu'il y a au moins une prestation (nouvelle ou existante)
+    if (items.length === 0 && selectedRecordIds.size === 0) {
+      alert('Veuillez ajouter au moins une prestation ou sélectionner des entretiens existants')
+      return
+    }
 
     setSaving(true)
     try {
@@ -145,7 +210,12 @@ export function GarageVisitsPage() {
         notes: item.notes || null
       }))
 
-      await garageVisitService.createWithItems(visitData, maintenanceItems)
+      // Passer les IDs des entretiens existants à rattacher
+      await garageVisitService.createWithItems(
+        visitData, 
+        maintenanceItems,
+        Array.from(selectedRecordIds)
+      )
       
       // Mettre à jour le kilométrage du véhicule si nécessaire
       const vehicle = vehicles.find(v => v.id === form.vehicle_id)
@@ -162,14 +232,28 @@ export function GarageVisitsPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer cette visite et toutes ses prestations ?')) return
+  const handleDelete = async (visit: GarageVisitWithItems) => {
+    setDeleteConfirmVisit(visit)
+  }
+
+  const confirmDelete = async (deleteItems: boolean) => {
+    if (!deleteConfirmVisit) return
     
+    setDeleting(true)
     try {
-      await garageVisitService.deleteWithItems(id)
+      if (deleteItems) {
+        // Supprimer la visite ET les entretiens
+        await garageVisitService.deleteWithItems(deleteConfirmVisit.id)
+      } else {
+        // Supprimer seulement la visite (les entretiens sont conservés avec visit_id = null)
+        await garageVisitService.delete(deleteConfirmVisit.id)
+      }
       await loadData()
+      setDeleteConfirmVisit(null)
     } catch (error) {
       console.error('Error deleting visit:', error)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -324,7 +408,7 @@ export function GarageVisitsPage() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
-                      handleDelete(visit.id)
+                      handleDelete(visit)
                     }}
                     className="btn btn-danger flex items-center gap-2"
                   >
@@ -389,14 +473,7 @@ export function GarageVisitsPage() {
                     <select
                       className="input"
                       value={form.vehicle_id}
-                      onChange={(e) => {
-                        const vehicle = vehicles.find(v => v.id === e.target.value)
-                        setForm({ 
-                          ...form, 
-                          vehicle_id: e.target.value,
-                          mileage: vehicle?.current_mileage || form.mileage 
-                        })
-                      }}
+                      onChange={(e) => handleVehicleChange(e.target.value)}
                       required
                     >
                       {vehicles.map((v) => (
@@ -466,12 +543,76 @@ export function GarageVisitsPage() {
                 </div>
               </div>
 
-              {/* Prestations */}
+              {/* Entretiens existants à rattacher */}
+              {(availableRecords.length > 0 || loadingRecords) && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                      <Link className="w-5 h-5" />
+                      Rattacher des entretiens existants
+                    </h3>
+                    {selectedRecordIds.size > 0 && (
+                      <span className="badge badge-success">
+                        {selectedRecordIds.size} sélectionné{selectedRecordIds.size > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                  
+                  {loadingRecords ? (
+                    <div className="flex items-center justify-center p-4">
+                      <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                      <span className="ml-2 text-sm text-gray-500">Chargement...</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-2">
+                      {availableRecords.map((record) => (
+                        <div 
+                          key={record.id}
+                          onClick={() => toggleRecordSelection(record.id)}
+                          className={`p-3 rounded-lg cursor-pointer transition-colors flex items-center justify-between ${
+                            selectedRecordIds.has(record.id) 
+                              ? 'bg-green-50 border-2 border-green-500' 
+                              : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                              selectedRecordIds.has(record.id) 
+                                ? 'bg-green-500 border-green-500' 
+                                : 'border-gray-300'
+                            }`}>
+                              {selectedRecordIds.has(record.id) && (
+                                <Check className="w-3 h-3 text-white" />
+                              )}
+                            </div>
+                            <div>
+                              <span className="badge badge-info text-xs mr-2">
+                                {getTypeLabel(record.type)}
+                              </span>
+                              <span className="font-medium text-sm">{record.description}</span>
+                              <div className="text-xs text-gray-500 mt-0.5">
+                                {new Date(record.date).toLocaleDateString('fr-FR')} • {record.mileage.toLocaleString()} km
+                              </div>
+                            </div>
+                          </div>
+                          <span className="font-medium text-sm">{formatCurrency(record.cost)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  <p className="text-xs text-gray-500">
+                    Ces entretiens ne sont pas encore rattachés à une visite. Sélectionnez ceux effectués lors de cette visite.
+                  </p>
+                </div>
+              )}
+
+              {/* Nouvelles prestations */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                     <Wrench className="w-5 h-5" />
-                    Prestations ({items.length})
+                    Nouvelles prestations ({items.length})
                   </h3>
                   <button
                     type="button"
@@ -484,21 +625,24 @@ export function GarageVisitsPage() {
                 </div>
 
                 <div className="space-y-3">
+                  {items.length === 0 && selectedRecordIds.size === 0 && (
+                    <p className="text-sm text-gray-500 text-center py-4 bg-gray-50 rounded-lg">
+                      Ajoutez des nouvelles prestations ou sélectionnez des entretiens existants ci-dessus
+                    </p>
+                  )}
                   {items.map((item, index) => (
                     <div key={item.id} className="p-4 bg-gray-50 rounded-lg space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium text-gray-500">
                           Prestation {index + 1}
                         </span>
-                        {items.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeItem(item.id)}
-                            className="p-1 hover:bg-red-100 rounded text-red-500"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeItem(item.id)}
+                          className="p-1 hover:bg-red-100 rounded text-red-500"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                       
                       <div className="grid grid-cols-2 gap-3">
@@ -544,9 +688,23 @@ export function GarageVisitsPage() {
                     </div>
                   ))}
                 </div>
+              </div>
 
-                {/* Total */}
-                <div className="flex items-center justify-between p-4 bg-blue-50 rounded-lg">
+              {/* Total */}
+              <div className="p-4 bg-blue-50 rounded-lg space-y-2">
+                {selectedRecordIds.size > 0 && (
+                  <div className="flex items-center justify-between text-sm text-gray-600">
+                    <span>Entretiens rattachés ({selectedRecordIds.size})</span>
+                    <span>{formatCurrency(getSelectedRecordsCost())}</span>
+                  </div>
+                )}
+                {items.length > 0 && (
+                  <div className="flex items-center justify-between text-sm text-gray-600">
+                    <span>Nouvelles prestations ({items.length})</span>
+                    <span>{formatCurrency(items.reduce((sum, item) => sum + (item.cost || 0), 0))}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between pt-2 border-t border-blue-200">
                   <span className="font-semibold text-gray-900">Total</span>
                   <span className="text-xl font-bold text-blue-600">
                     {formatCurrency(getTotalCost())}
@@ -576,6 +734,61 @@ export function GarageVisitsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modale de confirmation de suppression */}
+      {deleteConfirmVisit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-3 rounded-full bg-red-100">
+                  <Trash2 className="w-6 h-6 text-red-600" />
+                </div>
+                <h2 className="text-xl font-semibold">Supprimer la visite</h2>
+              </div>
+              
+              <p className="text-gray-600 mb-4">
+                Cette visite contient <strong>{deleteConfirmVisit.items.length} prestation{deleteConfirmVisit.items.length > 1 ? 's' : ''}</strong>.
+                Que souhaitez-vous faire ?
+              </p>
+
+              <div className="space-y-3">
+                <button
+                  onClick={() => confirmDelete(true)}
+                  disabled={deleting}
+                  className="w-full btn btn-danger flex items-center justify-center gap-2"
+                >
+                  {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  <Trash2 className="w-4 h-4" />
+                  Tout supprimer (visite + prestations)
+                </button>
+                
+                <button
+                  onClick={() => confirmDelete(false)}
+                  disabled={deleting}
+                  className="w-full btn btn-secondary flex items-center justify-center gap-2"
+                >
+                  {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Supprimer la visite, conserver les prestations
+                </button>
+                
+                <button
+                  onClick={() => setDeleteConfirmVisit(null)}
+                  disabled={deleting}
+                  className="w-full btn bg-gray-100 hover:bg-gray-200 text-gray-700"
+                >
+                  Annuler
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-500 mt-4">
+                Si vous conservez les prestations, elles resteront dans l'historique des entretiens 
+                et pourront être rattachées à une autre visite.
+              </p>
+            </div>
           </div>
         </div>
       )}
