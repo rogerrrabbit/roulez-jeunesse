@@ -50,12 +50,11 @@ export function DashboardPage() {
     if (!user) return
     setLoading(true)
     try {
-      const [vehiclesData, maintenanceData, remindersData, fuelData, schedulesData] = await Promise.all([
+      const [vehiclesData, maintenanceData, remindersData, fuelData] = await Promise.all([
         vehicleService.getAll(user.id),
         maintenanceService.getAll(user.id),
         reminderService.getUpcoming(user.id, 30),
-        fuelService.getAll(user.id),
-        maintenanceScheduleService.getAll(user.id)
+        fuelService.getAll(user.id)
       ])
 
       setVehicles(vehiclesData)
@@ -63,23 +62,22 @@ export function DashboardPage() {
       setUpcomingReminders(remindersData.slice(0, 5))
       setRecentFuel(fuelData.slice(0, 5))
 
-      // Calculer les statuts d'entretien
-      const statuses: MaintenanceStatus[] = []
-      for (const schedule of schedulesData) {
-        const vehicle = vehiclesData.find(v => v.id === schedule.vehicle_id)
-        if (vehicle) {
-          statuses.push(maintenanceScheduleService.calculateStatus(schedule, vehicle))
-        }
+      // Calculer les statuts d'entretien pour tous les véhicules
+      // Utilise getVehicleMaintenanceStatus qui charge automatiquement les lastRecords
+      const allStatuses: MaintenanceStatus[] = []
+      for (const vehicle of vehiclesData) {
+        const vehicleStatuses = await maintenanceScheduleService.getVehicleMaintenanceStatus(vehicle)
+        allStatuses.push(...vehicleStatuses)
       }
       
       // Trier: overdue d'abord, puis due_soon
-      statuses.sort((a, b) => {
+      allStatuses.sort((a, b) => {
         const order = { overdue: 0, due_soon: 1, ok: 2 }
         return order[a.status] - order[b.status]
       })
       
       // Garder seulement les entretiens à faire (overdue + due_soon)
-      const urgentStatuses = statuses.filter(s => s.status !== 'ok').slice(0, 5)
+      const urgentStatuses = allStatuses.filter(s => s.status !== 'ok').slice(0, 5)
       setMaintenanceStatuses(urgentStatuses)
 
       const totalMaintenanceCost = maintenanceData.reduce((sum, m) => sum + m.cost, 0)
@@ -90,8 +88,8 @@ export function DashboardPage() {
         totalMaintenance: maintenanceData.length,
         totalSpent: totalMaintenanceCost + totalFuelCost,
         pendingReminders: remindersData.filter(r => !r.is_completed).length,
-        overdueSchedules: statuses.filter(s => s.status === 'overdue').length,
-        dueSoonSchedules: statuses.filter(s => s.status === 'due_soon').length
+        overdueSchedules: allStatuses.filter(s => s.status === 'overdue').length,
+        dueSoonSchedules: allStatuses.filter(s => s.status === 'due_soon').length
       })
     } catch (error) {
       console.error('Error loading dashboard:', error)

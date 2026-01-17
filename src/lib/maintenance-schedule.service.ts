@@ -107,20 +107,21 @@ export const maintenanceScheduleService = {
     let status: 'ok' | 'due_soon' | 'overdue' = 'ok'
 
     // Utiliser les données du lastRecord si disponible, sinon les champs du schedule
-    const lastDoneDate = lastRecord?.date || schedule.last_done_date
-    const lastDoneMileage = lastRecord?.mileage ?? schedule.last_done_mileage
+    let lastDoneDate = lastRecord?.date || schedule.last_done_date
+    let lastDoneMileage = lastRecord?.mileage ?? schedule.last_done_mileage
 
-    // Si jamais fait, considérer comme à faire bientôt
-    if (lastDoneDate === null && lastDoneMileage === null) {
-      return {
-        schedule,
-        status: 'due_soon',
-        nextDueDate: null,
-        nextDueMileage: schedule.interval_km ? currentMileage : null,
-        daysUntilDue: null,
-        kmUntilDue: null,
-        lastRecord: lastRecord || null
+    // Si jamais fait, utiliser la date de mise en service / achat du véhicule
+    // et 0 km comme point de départ pour le calcul
+    const neverDone = lastDoneDate === null && lastDoneMileage === null
+    if (neverDone) {
+      // Pour la date : utiliser purchase_date ou le 1er janvier de l'année du véhicule
+      if (vehicle.purchase_date) {
+        lastDoneDate = vehicle.purchase_date
+      } else if (vehicle.year) {
+        lastDoneDate = `${vehicle.year}-01-01`
       }
+      // Pour le kilométrage : partir de 0
+      lastDoneMileage = 0
     }
 
     // Calcul par kilométrage
