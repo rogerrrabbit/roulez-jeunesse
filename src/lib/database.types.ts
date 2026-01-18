@@ -208,6 +208,7 @@ export interface Database {
           id: string
           vehicle_id: string
           user_id: string
+          title: string | null
           date: string
           mileage: number
           garage_name: string | null
@@ -223,6 +224,7 @@ export interface Database {
           id?: string
           vehicle_id: string
           user_id: string
+          title?: string | null
           date: string
           mileage: number
           garage_name?: string | null
@@ -238,6 +240,7 @@ export interface Database {
           id?: string
           vehicle_id?: string
           user_id?: string
+          title?: string | null
           date?: string
           mileage?: number
           garage_name?: string | null

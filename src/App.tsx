@@ -10,6 +10,7 @@ import { RemindersPage } from './pages/RemindersPage'
 import { FuelPage } from './pages/FuelPage'
 import { GarageVisitsPage } from './pages/GarageVisitsPage'
 import { MaintenanceSchedulePage } from './pages/MaintenanceSchedulePage'
+import { SettingsPage } from './pages/SettingsPage'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -107,6 +108,14 @@ function AppRoutes() {
         element={
           <PrivateRoute>
             <MaintenanceSchedulePage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <PrivateRoute>
+            <SettingsPage />
           </PrivateRoute>
         }
       />

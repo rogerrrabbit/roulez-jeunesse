@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { vehicleService } from '../lib/vehicles.service'
 import { garageVisitService } from '../lib/garage-visits.service'
 import { MAINTENANCE_TYPES, maintenanceService } from '../lib/maintenance.service'
+import { MaintenanceModal } from '../components/MaintenanceModal'
 import type { Vehicle, GarageVisitWithItems, GarageVisitInsert, MaintenanceRecord } from '../lib/database.types'
 import { 
   Wrench, 
@@ -19,7 +20,8 @@ import {
   ChevronUp,
   FileText,
   Link,
-  Check
+  Check,
+  Pencil
 } from 'lucide-react'
 
 interface MaintenanceItem {
@@ -28,6 +30,14 @@ interface MaintenanceItem {
   description: string
   cost: number
   notes: string
+}
+
+interface ExistingItem {
+  id: string
+  type: string
+  description: string
+  cost: number
+  notes: string | null
 }
 
 export function GarageVisitsPage() {
@@ -49,8 +59,17 @@ export function GarageVisitsPage() {
   const [deleteConfirmVisit, setDeleteConfirmVisit] = useState<GarageVisitWithItems | null>(null)
   const [deleting, setDeleting] = useState(false)
 
+  // Mode édition
+  const [editingVisit, setEditingVisit] = useState<GarageVisitWithItems | null>(null)
+  const [existingItems, setExistingItems] = useState<ExistingItem[]>([])
+
+  // Modale d'édition de prestation
+  const [showMaintenanceModal, setShowMaintenanceModal] = useState(false)
+  const [editingMaintenance, setEditingMaintenance] = useState<MaintenanceRecord | null>(null)
+
   const [form, setForm] = useState<Partial<GarageVisitInsert>>({
     vehicle_id: '',
+    title: '',
     date: new Date().toISOString().split('T')[0],
     mileage: 0,
     garage_name: '',
@@ -92,8 +111,11 @@ export function GarageVisitsPage() {
     const selectedVehicle = vehicles.find(v => v.id === filterVehicle) || vehicles[0]
     const vehicleId = filterVehicle || vehicles[0]?.id || ''
     
+    setEditingVisit(null)
+    setExistingItems([])
     setForm({
       vehicle_id: vehicleId,
+      title: '',
       date: new Date().toISOString().split('T')[0],
       mileage: selectedVehicle?.current_mileage || 0,
       garage_name: '',
@@ -109,6 +131,36 @@ export function GarageVisitsPage() {
     if (vehicleId) {
       await loadAvailableRecords(vehicleId)
     }
+  }
+
+  const openEditModal = async (visit: GarageVisitWithItems) => {
+    setEditingVisit(visit)
+    setForm({
+      vehicle_id: visit.vehicle_id,
+      title: visit.title || '',
+      date: visit.date,
+      mileage: visit.mileage,
+      garage_name: visit.garage_name || '',
+      garage_address: visit.garage_address || '',
+      invoice_number: visit.invoice_number || '',
+      notes: visit.notes || ''
+    })
+    
+    // Charger les items existants de la visite
+    const visitExistingItems: ExistingItem[] = visit.items.map(item => ({
+      id: item.id,
+      type: item.type,
+      description: item.description,
+      cost: item.cost,
+      notes: item.notes
+    }))
+    setExistingItems(visitExistingItems)
+    setItems([]) // Pas de nouveaux items au départ
+    setSelectedRecordIds(new Set())
+    setShowModal(true)
+    
+    // Charger les entretiens disponibles pour rattachement
+    await loadAvailableRecords(visit.vehicle_id)
   }
 
   const loadAvailableRecords = async (vehicleId: string) => {
@@ -153,6 +205,8 @@ export function GarageVisitsPage() {
 
   const closeModal = () => {
     setShowModal(false)
+    setEditingVisit(null)
+    setExistingItems([])
     setSelectedRecordIds(new Set())
     setAvailableRecords([])
   }
@@ -179,28 +233,27 @@ export function GarageVisitsPage() {
 
   const getTotalCost = () => {
     const newItemsCost = items.reduce((sum, item) => sum + (item.cost || 0), 0)
+    const existingItemsCost = existingItems.reduce((sum, item) => sum + (item.cost || 0), 0)
     const selectedRecordsCost = getSelectedRecordsCost()
-    return newItemsCost + selectedRecordsCost
+    return newItemsCost + existingItemsCost + selectedRecordsCost
+  }
+
+  const removeExistingItem = (id: string) => {
+    setExistingItems(existingItems.filter(item => item.id !== id))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) return
 
-    // Vérifier qu'il y a au moins une prestation (nouvelle ou existante)
-    if (items.length === 0 && selectedRecordIds.size === 0) {
+    // Vérifier qu'il y a au moins une prestation (nouvelle, existante ou rattachée)
+    if (items.length === 0 && existingItems.length === 0 && selectedRecordIds.size === 0) {
       alert('Veuillez ajouter au moins une prestation ou sélectionner des entretiens existants')
       return
     }
 
     setSaving(true)
     try {
-      const visitData: GarageVisitInsert = {
-        ...form as GarageVisitInsert,
-        user_id: user.id,
-        total_cost: getTotalCost()
-      }
-
       const maintenanceItems = items.map(item => ({
         vehicle_id: form.vehicle_id!,
         user_id: user.id,
@@ -210,12 +263,40 @@ export function GarageVisitsPage() {
         notes: item.notes || null
       }))
 
-      // Passer les IDs des entretiens existants à rattacher
-      await garageVisitService.createWithItems(
-        visitData, 
-        maintenanceItems,
-        Array.from(selectedRecordIds)
-      )
+      if (editingVisit) {
+        // Mode édition
+        const visitUpdate = {
+          title: form.title,
+          date: form.date,
+          mileage: form.mileage,
+          garage_name: form.garage_name,
+          garage_address: form.garage_address,
+          invoice_number: form.invoice_number,
+          notes: form.notes,
+          total_cost: getTotalCost()
+        }
+
+        await garageVisitService.updateWithItems(
+          editingVisit.id,
+          visitUpdate,
+          maintenanceItems,
+          existingItems.map(item => item.id),
+          Array.from(selectedRecordIds)
+        )
+      } else {
+        // Mode création
+        const visitData: GarageVisitInsert = {
+          ...form as GarageVisitInsert,
+          user_id: user.id,
+          total_cost: getTotalCost()
+        }
+
+        await garageVisitService.createWithItems(
+          visitData, 
+          maintenanceItems,
+          Array.from(selectedRecordIds)
+        )
+      }
       
       // Mettre à jour le kilométrage du véhicule si nécessaire
       const vehicle = vehicles.find(v => v.id === form.vehicle_id)
@@ -386,8 +467,11 @@ export function GarageVisitsPage() {
                       </span>
                     </div>
                     <h3 className="font-semibold text-lg mt-1">
-                      {visit.garage_name || 'Visite garage'}
+                      {visit.title || visit.garage_name || 'Visite garage'}
                     </h3>
+                    {visit.title && visit.garage_name && (
+                      <p className="text-sm text-gray-500">🔧 {visit.garage_name}</p>
+                    )}
                     <div className="flex flex-wrap gap-4 mt-2 text-sm text-gray-600">
                       <span className="flex items-center gap-1">
                         <Calendar className="w-4 h-4" />
@@ -405,6 +489,15 @@ export function GarageVisitsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openEditModal(visit)
+                    }}
+                    className="btn btn-secondary flex items-center gap-2"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
@@ -426,7 +519,15 @@ export function GarageVisitsPage() {
               {expandedVisits.has(visit.id) && visit.items.length > 0 && (
                 <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
                   {visit.items.map((item) => (
-                    <div key={item.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div 
+                      key={item.id} 
+                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setEditingMaintenance(item)
+                        setShowMaintenanceModal(true)
+                      }}
+                    >
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-lg bg-green-100">
                           <Wrench className="w-4 h-4 text-green-600" />
@@ -438,7 +539,10 @@ export function GarageVisitsPage() {
                           <span className="font-medium">{item.description}</span>
                         </div>
                       </div>
-                      <span className="font-medium">{formatCurrency(item.cost)}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{formatCurrency(item.cost)}</span>
+                        <Pencil className="w-4 h-4 text-gray-400" />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -453,7 +557,9 @@ export function GarageVisitsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b sticky top-0 bg-white z-10">
-              <h2 className="text-xl font-semibold">Nouvelle visite garage</h2>
+              <h2 className="text-xl font-semibold">
+                {editingVisit ? 'Modifier la visite garage' : 'Nouvelle visite garage'}
+              </h2>
               <button onClick={closeModal} className="p-2 hover:bg-gray-100 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
@@ -466,6 +572,17 @@ export function GarageVisitsPage() {
                   <FileText className="w-5 h-5" />
                   Informations de la visite
                 </h3>
+
+                <div>
+                  <label className="label">Intitulé</label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={form.title || ''}
+                    onChange={(e) => setForm({ ...form, title: e.target.value })}
+                    placeholder="Ex: Révision annuelle, Vidange 30 000 km..."
+                  />
+                </div>
                 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -475,6 +592,7 @@ export function GarageVisitsPage() {
                       value={form.vehicle_id}
                       onChange={(e) => handleVehicleChange(e.target.value)}
                       required
+                      disabled={!!editingVisit}
                     >
                       {vehicles.map((v) => (
                         <option key={v.id} value={v.id}>
@@ -607,6 +725,48 @@ export function GarageVisitsPage() {
                 </div>
               )}
 
+              {/* Prestations existantes (mode édition) */}
+              {editingVisit && existingItems.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                      <Wrench className="w-5 h-5" />
+                      Prestations existantes ({existingItems.length})
+                    </h3>
+                  </div>
+
+                  <div className="space-y-3">
+                    {existingItems.map((item) => (
+                      <div key={item.id} className="p-4 bg-blue-50 rounded-lg border-2 border-blue-200">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <span className="badge badge-info text-xs">
+                              {getTypeLabel(item.type)}
+                            </span>
+                            <span className="font-medium">{item.description}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="font-medium">{formatCurrency(item.cost)}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeExistingItem(item.id)}
+                              className="p-1 hover:bg-red-100 rounded text-red-500"
+                              title="Détacher cette prestation de la visite"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <p className="text-xs text-gray-500">
+                    Cliquez sur ✕ pour détacher une prestation de cette visite (elle sera conservée dans l'historique).
+                  </p>
+                </div>
+              )}
+
               {/* Nouvelles prestations */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -625,7 +785,7 @@ export function GarageVisitsPage() {
                 </div>
 
                 <div className="space-y-3">
-                  {items.length === 0 && selectedRecordIds.size === 0 && (
+                  {items.length === 0 && existingItems.length === 0 && selectedRecordIds.size === 0 && (
                     <p className="text-sm text-gray-500 text-center py-4 bg-gray-50 rounded-lg">
                       Ajoutez des nouvelles prestations ou sélectionnez des entretiens existants ci-dessus
                     </p>
@@ -662,15 +822,14 @@ export function GarageVisitsPage() {
                           </select>
                         </div>
                         <div>
-                          <label className="label text-xs">Coût (€) *</label>
+                          <label className="label text-xs">Coût (€)</label>
                           <input
                             type="number"
                             className="input text-sm"
-                            value={item.cost || ''}
-                            onChange={(e) => updateItem(item.id, 'cost', parseFloat(e.target.value) || 0)}
+                            value={item.cost ?? ''}
+                            onChange={(e) => updateItem(item.id, 'cost', e.target.value === '' ? 0 : parseFloat(e.target.value))}
                             min="0"
                             step="0.01"
-                            required
                           />
                         </div>
                       </div>
@@ -692,6 +851,12 @@ export function GarageVisitsPage() {
 
               {/* Total */}
               <div className="p-4 bg-blue-50 rounded-lg space-y-2">
+                {existingItems.length > 0 && (
+                  <div className="flex items-center justify-between text-sm text-gray-600">
+                    <span>Prestations existantes ({existingItems.length})</span>
+                    <span>{formatCurrency(existingItems.reduce((sum, item) => sum + (item.cost || 0), 0))}</span>
+                  </div>
+                )}
                 {selectedRecordIds.size > 0 && (
                   <div className="flex items-center justify-between text-sm text-gray-600">
                     <span>Entretiens rattachés ({selectedRecordIds.size})</span>
@@ -730,7 +895,7 @@ export function GarageVisitsPage() {
                 </button>
                 <button type="submit" disabled={saving} className="btn btn-primary flex-1 flex items-center justify-center gap-2">
                   {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Enregistrer la visite
+                  {editingVisit ? 'Enregistrer les modifications' : 'Enregistrer la visite'}
                 </button>
               </div>
             </form>
@@ -791,6 +956,21 @@ export function GarageVisitsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modale d'édition de prestation */}
+      {user && (
+        <MaintenanceModal
+          isOpen={showMaintenanceModal}
+          onClose={() => {
+            setShowMaintenanceModal(false)
+            setEditingMaintenance(null)
+          }}
+          onSaved={loadData}
+          vehicles={vehicles}
+          userId={user.id}
+          editingRecord={editingMaintenance}
+        />
       )}
     </div>
   )
