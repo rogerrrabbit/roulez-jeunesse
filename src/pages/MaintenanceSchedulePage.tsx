@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { vehicleService } from '../lib/vehicles.service'
-import { MAINTENANCE_TYPES } from '../lib/maintenance.service'
+import { MAINTENANCE_TYPES, maintenanceService } from '../lib/maintenance.service'
 import { 
   maintenanceScheduleService, 
   MAINTENANCE_STATUS_LABELS 
@@ -11,7 +11,8 @@ import type {
   Vehicle, 
   MaintenanceSchedule, 
   MaintenanceScheduleInsert, 
-  MaintenanceStatus
+  MaintenanceStatus,
+  MaintenanceRecord
 } from '../lib/database.types'
 import { 
   CalendarCheck, 
@@ -27,8 +28,12 @@ import {
   Clock,
   Settings,
   Gauge,
-  Calendar
+  Calendar,
+  List,
+  Grid3X3
 } from 'lucide-react'
+
+type ViewMode = 'list' | 'matrix'
 
 export function MaintenanceSchedulePage() {
   const { user } = useAuth()
@@ -40,6 +45,10 @@ export function MaintenanceSchedulePage() {
   const [editingSchedule, setEditingSchedule] = useState<MaintenanceSchedule | null>(null)
   const [saving, setSaving] = useState(false)
   const [filterVehicle, setFilterVehicle] = useState<string>('')
+  const [viewMode, setViewMode] = useState<ViewMode>('list')
+  
+  // Pour la vue matrice : tous les entretiens effectués
+  const [allMaintenanceRecords, setAllMaintenanceRecords] = useState<MaintenanceRecord[]>([])
   
   // Pour la modale d'ajout d'entretien (composant partagé)
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false)
@@ -68,12 +77,14 @@ export function MaintenanceSchedulePage() {
     if (!user) return
     setLoading(true)
     try {
-      const [vehiclesData, schedulesData] = await Promise.all([
+      const [vehiclesData, schedulesData, maintenanceData] = await Promise.all([
         vehicleService.getAll(user.id),
-        maintenanceScheduleService.getAll(user.id)
+        maintenanceScheduleService.getAll(user.id),
+        maintenanceService.getAll(user.id)
       ])
       setVehicles(vehiclesData)
       setSchedules(schedulesData)
+      setAllMaintenanceRecords(maintenanceData)
       
       if (vehiclesData.length > 0 && !scheduleForm.vehicle_id) {
         setScheduleForm(f => ({ ...f, vehicle_id: vehiclesData[0].id }))
@@ -276,6 +287,34 @@ export function MaintenanceSchedulePage() {
           <p className="text-gray-500">Planifiez et suivez vos entretiens</p>
         </div>
         <div className="flex flex-wrap gap-3">
+          {/* Switch vue liste / matrice */}
+          <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-3 py-2 flex items-center gap-1.5 text-sm transition-colors ${
+                viewMode === 'list' 
+                  ? 'bg-blue-600 text-white' 
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+              title="Vue liste"
+            >
+              <List className="w-4 h-4" />
+              Liste
+            </button>
+            <button
+              onClick={() => setViewMode('matrix')}
+              className={`px-3 py-2 flex items-center gap-1.5 text-sm transition-colors ${
+                viewMode === 'matrix' 
+                  ? 'bg-blue-600 text-white' 
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+              title="Vue matrice"
+            >
+              <Grid3X3 className="w-4 h-4" />
+              Matrice
+            </button>
+          </div>
+          
           <div className="relative">
             <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <select
@@ -347,6 +386,23 @@ export function MaintenanceSchedulePage() {
         </div>
       </div>
 
+      {/* Vue Matrice */}
+      {viewMode === 'matrix' && (
+        <MatrixView 
+          statuses={statuses}
+          maintenanceRecords={filterVehicle 
+            ? allMaintenanceRecords.filter(r => r.vehicle_id === filterVehicle)
+            : allMaintenanceRecords
+          }
+          vehicles={vehicles}
+          filterVehicle={filterVehicle}
+          getVehicleName={getVehicleName}
+        />
+      )}
+
+      {/* Vue Liste */}
+      {viewMode === 'list' && (
+        <>
       {/* Schedules list */}
       {statuses.length === 0 ? (
         <div className="card text-center py-12">
@@ -500,6 +556,8 @@ export function MaintenanceSchedulePage() {
           })}
         </div>
       )}
+      </>
+      )}
 
       {/* Modal création/édition de calendrier */}
       {showScheduleModal && (
@@ -647,6 +705,258 @@ export function MaintenanceSchedulePage() {
           linkedSchedule={scheduleForMaintenance}
         />
       )}
+    </div>
+  )
+}
+
+// Composant Vue Matrice
+interface MatrixViewProps {
+  statuses: MaintenanceStatus[]
+  maintenanceRecords: MaintenanceRecord[]
+  vehicles: Vehicle[]
+  filterVehicle: string
+  getVehicleName: (vehicleId: string) => string
+}
+
+function MatrixView({ 
+  statuses, 
+  maintenanceRecords, 
+  vehicles,
+  filterVehicle,
+  getVehicleName
+}: MatrixViewProps) {
+  const currentYear = new Date().getFullYear()
+  
+  // Déterminer la plage d'années à afficher
+  // Inclure les années passées (basées sur les entretiens) et les 3 prochaines années
+  const recordYears = maintenanceRecords.map(r => new Date(r.date).getFullYear())
+  const vehicleYears = vehicles.map(v => v.year)
+  const allYears = [...recordYears, ...vehicleYears, currentYear]
+  const minYear = Math.min(...allYears, currentYear - 2)
+  const maxYear = currentYear + 3
+  
+  const years: number[] = []
+  for (let y = minYear; y <= maxYear; y++) {
+    years.push(y)
+  }
+
+  // Grouper les statuts par nom d'entretien (+ véhicule si pas filtré)
+  const groupedStatuses = statuses.reduce((acc, status) => {
+    const key = filterVehicle 
+      ? status.schedule.name 
+      : `${status.schedule.name} (${getVehicleName(status.schedule.vehicle_id)})`
+    
+    if (!acc[key]) {
+      acc[key] = {
+        schedule: status.schedule,
+        status: status,
+        records: [] as MaintenanceRecord[]
+      }
+    }
+    return acc
+  }, {} as Record<string, { schedule: MaintenanceSchedule; status: MaintenanceStatus; records: MaintenanceRecord[] }>)
+
+  // Ajouter les entretiens effectués à chaque groupe
+  for (const record of maintenanceRecords) {
+    // Trouver le schedule correspondant
+    const matchingSchedule = statuses.find(s => 
+      s.schedule.vehicle_id === record.vehicle_id && 
+      s.schedule.maintenance_type === record.type
+    )
+    
+    if (matchingSchedule) {
+      const key = filterVehicle 
+        ? matchingSchedule.schedule.name 
+        : `${matchingSchedule.schedule.name} (${getVehicleName(matchingSchedule.schedule.vehicle_id)})`
+      
+      if (groupedStatuses[key]) {
+        groupedStatuses[key].records.push(record)
+      }
+    }
+  }
+
+  // Calculer les années prévues pour chaque entretien basé sur l'intervalle
+  const getScheduledYears = (status: MaintenanceStatus): Set<number> => {
+    const scheduled = new Set<number>()
+    const schedule = status.schedule
+    
+    if (status.nextDueDate) {
+      const nextYear = new Date(status.nextDueDate).getFullYear()
+      scheduled.add(nextYear)
+      
+      // Ajouter les années suivantes basées sur l'intervalle
+      if (schedule.interval_months) {
+        let year = nextYear
+        const intervalYears = Math.ceil(schedule.interval_months / 12)
+        for (let i = 0; i < 5 && year <= maxYear; i++) {
+          year += intervalYears
+          if (year <= maxYear) scheduled.add(year)
+        }
+      }
+    }
+    
+    return scheduled
+  }
+
+  // Déterminer le statut d'une cellule
+  const getCellStatus = (
+    group: { schedule: MaintenanceSchedule; status: MaintenanceStatus; records: MaintenanceRecord[] },
+    year: number
+  ): 'done' | 'overdue' | 'due_soon' | 'scheduled' | 'none' => {
+    // Vérifier si un entretien a été fait cette année
+    const doneThisYear = group.records.some(r => new Date(r.date).getFullYear() === year)
+    if (doneThisYear) return 'done'
+    
+    // Pour l'année courante, vérifier le statut
+    if (year === currentYear) {
+      if (group.status.status === 'overdue') return 'overdue'
+      if (group.status.status === 'due_soon') return 'due_soon'
+    }
+    
+    // Vérifier si c'est une année prévue (future)
+    if (year > currentYear) {
+      const scheduledYears = getScheduledYears(group.status)
+      if (scheduledYears.has(year)) return 'scheduled'
+    }
+    
+    // Pour les années passées sans entretien, vérifier si c'était prévu
+    if (year < currentYear && group.schedule.interval_months) {
+      // Calculer si un entretien aurait dû avoir lieu cette année
+      const intervalYears = Math.ceil(group.schedule.interval_months / 12)
+      const vehicle = vehicles.find(v => v.id === group.schedule.vehicle_id)
+      if (vehicle) {
+        const startYear = vehicle.purchase_date 
+          ? new Date(vehicle.purchase_date).getFullYear() 
+          : vehicle.year
+        
+        if (year >= startYear) {
+          const yearsSinceStart = year - startYear
+          if (yearsSinceStart > 0 && yearsSinceStart % intervalYears === 0) {
+            // C'était prévu mais pas fait
+            return 'overdue'
+          }
+        }
+      }
+    }
+    
+    return 'none'
+  }
+
+  const getCellContent = (status: 'done' | 'overdue' | 'due_soon' | 'scheduled' | 'none') => {
+    switch (status) {
+      case 'done':
+        return (
+          <div className="w-4 h-4 rounded-full bg-green-500" title="Effectué" />
+        )
+      case 'overdue':
+        return (
+          <div className="w-4 h-4 rounded-full bg-red-500 animate-pulse" title="En retard" />
+        )
+      case 'due_soon':
+        return (
+          <div className="w-4 h-4 rounded-full bg-yellow-500" title="À faire bientôt" />
+        )
+      case 'scheduled':
+        return (
+          <div className="w-4 h-4 rounded-full bg-gray-300" title="Prévu" />
+        )
+      default:
+        return null
+    }
+  }
+
+  if (Object.keys(groupedStatuses).length === 0) {
+    return (
+      <div className="card text-center py-12">
+        <CalendarCheck className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+        <h3 className="text-xl font-semibold text-gray-900 mb-2">
+          Aucun calendrier d'entretien
+        </h3>
+        <p className="text-gray-500">
+          Configurez les intervalles d'entretien pour voir la vue matrice.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card overflow-x-auto">
+      {/* Légende */}
+      <div className="flex flex-wrap gap-4 mb-4 pb-4 border-b">
+        <div className="flex items-center gap-2 text-sm">
+          <div className="w-4 h-4 rounded-full bg-green-500" />
+          <span>Effectué</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <div className="w-4 h-4 rounded-full bg-yellow-500" />
+          <span>À faire bientôt</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <div className="w-4 h-4 rounded-full bg-red-500" />
+          <span>En retard</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <div className="w-4 h-4 rounded-full bg-gray-300" />
+          <span>Prévu</span>
+        </div>
+      </div>
+
+      <table className="w-full">
+        <thead>
+          <tr>
+            <th className="text-left py-3 px-4 font-semibold text-gray-700 bg-gray-900 text-white rounded-tl-lg min-w-[250px]">
+              Entretien
+            </th>
+            {years.map((year, index) => (
+              <th 
+                key={year} 
+                className={`py-3 px-4 font-semibold text-center bg-gray-900 text-white min-w-[80px] ${
+                  year === currentYear ? 'bg-blue-700' : ''
+                } ${index === years.length - 1 ? 'rounded-tr-lg' : ''}`}
+              >
+                {year}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(groupedStatuses).map(([name, group], index) => (
+            <tr 
+              key={name} 
+              className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}
+            >
+              <td className="py-3 px-4 border-b border-gray-200">
+                <div className="font-medium text-gray-900">{group.schedule.name}</div>
+                <div className="text-sm text-gray-500">
+                  {group.schedule.interval_km && `${group.schedule.interval_km.toLocaleString()} km`}
+                  {group.schedule.interval_km && group.schedule.interval_months && ' • '}
+                  {group.schedule.interval_months && `${group.schedule.interval_months} mois`}
+                </div>
+                {!filterVehicle && (
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {getVehicleName(group.schedule.vehicle_id)}
+                  </div>
+                )}
+              </td>
+              {years.map(year => {
+                const cellStatus = getCellStatus(group, year)
+                return (
+                  <td 
+                    key={year} 
+                    className={`py-3 px-4 border-b border-gray-200 text-center ${
+                      year === currentYear ? 'bg-blue-50' : ''
+                    }`}
+                  >
+                    <div className="flex justify-center">
+                      {getCellContent(cellStatus)}
+                    </div>
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
