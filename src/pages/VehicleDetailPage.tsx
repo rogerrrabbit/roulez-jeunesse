@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { vehicleService } from '../lib/vehicles.service'
@@ -18,8 +18,20 @@ import {
   Wrench,
   Bell,
   TrendingUp,
-  Edit
+  Edit,
+  BarChart3
 } from 'lucide-react'
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer
+} from 'recharts'
 
 export function VehicleDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -35,7 +47,7 @@ export function VehicleDetailPage() {
     avgPricePerLiter: 0
   })
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'maintenance' | 'fuel' | 'reminders'>('maintenance')
+  const [activeTab, setActiveTab] = useState<'maintenance' | 'fuel' | 'reminders' | 'stats'>('maintenance')
 
   useEffect(() => {
     if (user && id) loadData()
@@ -91,6 +103,58 @@ export function VehicleDetailPage() {
   const totalMaintenanceCost = maintenance.reduce((sum, m) => sum + m.cost, 0)
   const totalFuelCost = fuelLogs.reduce((sum, f) => sum + f.total_cost, 0)
   const totalCost = totalMaintenanceCost + totalFuelCost + (vehicle?.purchase_price || 0)
+
+  // Données pour le graphique d'évolution du kilométrage
+  const mileageData = useMemo(() => {
+    // Combiner les points de mesure des entretiens et des pleins
+    const allPoints: { date: string; mileage: number; source: string }[] = []
+    
+    maintenance.forEach(m => {
+      allPoints.push({ date: m.date, mileage: m.mileage, source: 'entretien' })
+    })
+    
+    fuelLogs.forEach(f => {
+      allPoints.push({ date: f.date, mileage: f.mileage, source: 'carburant' })
+    })
+    
+    // Trier par date
+    allPoints.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    
+    // Supprimer les doublons de même date (garder le kilométrage le plus élevé)
+    const uniquePoints: { date: string; mileage: number }[] = []
+    allPoints.forEach(point => {
+      const existing = uniquePoints.find(p => p.date === point.date)
+      if (existing) {
+        existing.mileage = Math.max(existing.mileage, point.mileage)
+      } else {
+        uniquePoints.push({ date: point.date, mileage: point.mileage })
+      }
+    })
+    
+    // Formater pour le graphique
+    return uniquePoints.map(p => ({
+      date: new Date(p.date).toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }),
+      fullDate: p.date,
+      km: p.mileage
+    }))
+  }, [maintenance, fuelLogs])
+
+  // Données pour le graphique des coûts par année
+  const costByYearData = useMemo(() => {
+    const costsByYear: Record<number, number> = {}
+    
+    maintenance.forEach(m => {
+      const year = new Date(m.date).getFullYear()
+      costsByYear[year] = (costsByYear[year] || 0) + m.cost
+    })
+    
+    // Convertir en tableau et trier par année
+    const years = Object.keys(costsByYear).map(Number).sort()
+    return years.map(year => ({
+      year: year.toString(),
+      cost: Math.round(costsByYear[year] * 100) / 100
+    }))
+  }, [maintenance])
 
   if (loading) {
     return (
@@ -249,6 +313,17 @@ export function VehicleDetailPage() {
             <Bell className="w-4 h-4 inline mr-2" />
             Rappels ({reminders.filter(r => !r.is_completed).length})
           </button>
+          <button
+            onClick={() => setActiveTab('stats')}
+            className={`pb-3 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'stats'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 inline mr-2" />
+            Statistiques
+          </button>
         </nav>
       </div>
 
@@ -395,6 +470,142 @@ export function VehicleDetailPage() {
                 </div>
               </div>
             ))
+          )}
+        </div>
+      )}
+
+      {activeTab === 'stats' && (
+        <div className="space-y-6">
+          {/* Évolution du kilométrage */}
+          <div className="card">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Gauge className="w-5 h-5 text-blue-600" />
+              Évolution du kilométrage
+            </h3>
+            {mileageData.length < 2 ? (
+              <div className="text-center py-8 text-gray-500">
+                <p>Pas assez de données pour afficher le graphique</p>
+                <p className="text-sm mt-1">Ajoutez des entretiens ou des pleins avec le kilométrage</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={mileageData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis 
+                    dataKey="date" 
+                    tick={{ fontSize: 12 }}
+                    stroke="#6b7280"
+                  />
+                  <YAxis 
+                    tick={{ fontSize: 12 }}
+                    stroke="#6b7280"
+                    tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`}
+                  />
+                  <Tooltip 
+                    formatter={(value) => [`${Number(value).toLocaleString()} km`, 'Kilométrage']}
+                    labelStyle={{ color: '#374151' }}
+                    contentStyle={{ 
+                      backgroundColor: 'white', 
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="km" 
+                    stroke="#3b82f6" 
+                    strokeWidth={2}
+                    dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6, fill: '#2563eb' }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Coût par année */}
+          <div className="card">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Euro className="w-5 h-5 text-green-600" />
+              Coût d'entretien par année
+            </h3>
+            {costByYearData.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <p>Aucune donnée de coût disponible</p>
+                <p className="text-sm mt-1">Ajoutez des entretiens avec leurs coûts</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={costByYearData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis 
+                    dataKey="year" 
+                    tick={{ fontSize: 12 }}
+                    stroke="#6b7280"
+                  />
+                  <YAxis 
+                    tick={{ fontSize: 12 }}
+                    stroke="#6b7280"
+                    tickFormatter={(value) => `${value}€`}
+                  />
+                  <Tooltip 
+                    formatter={(value) => [`${Number(value).toLocaleString()} €`, 'Coût total']}
+                    labelStyle={{ color: '#374151' }}
+                    contentStyle={{ 
+                      backgroundColor: 'white', 
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    }}
+                  />
+                  <Bar 
+                    dataKey="cost" 
+                    fill="#22c55e" 
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Résumé statistique */}
+          {(mileageData.length >= 2 || costByYearData.length > 0) && (
+            <div className="card bg-gray-50">
+              <h3 className="text-lg font-semibold mb-4">Résumé</h3>
+              <div className="grid grid-cols-2 gap-4">
+                {mileageData.length >= 2 && (
+                  <>
+                    <div className="bg-white p-3 rounded-lg">
+                      <p className="text-sm text-gray-500">Kilométrage parcouru</p>
+                      <p className="text-xl font-bold text-blue-600">
+                        {(mileageData[mileageData.length - 1].km - mileageData[0].km).toLocaleString()} km
+                      </p>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg">
+                      <p className="text-sm text-gray-500">Points de mesure</p>
+                      <p className="text-xl font-bold text-gray-700">{mileageData.length}</p>
+                    </div>
+                  </>
+                )}
+                {costByYearData.length > 0 && (
+                  <>
+                    <div className="bg-white p-3 rounded-lg">
+                      <p className="text-sm text-gray-500">Coût total</p>
+                      <p className="text-xl font-bold text-green-600">
+                        {costByYearData.reduce((acc, item) => acc + item.cost, 0).toLocaleString()} €
+                      </p>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg">
+                      <p className="text-sm text-gray-500">Coût moyen / an</p>
+                      <p className="text-xl font-bold text-gray-700">
+                        {Math.round(costByYearData.reduce((acc, item) => acc + item.cost, 0) / costByYearData.length).toLocaleString()} €
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}
