@@ -3,14 +3,14 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { 
   Lock, 
-  Cloud, 
   Save, 
   Loader2, 
   Check, 
   AlertTriangle,
   Download,
   Upload,
-  ExternalLink
+  HardDrive,
+  Info
 } from 'lucide-react'
 
 export function SettingsPage() {
@@ -22,13 +22,9 @@ export function SettingsPage() {
   const [passwordLoading, setPasswordLoading] = useState(false)
   const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
 
-  // OneDrive backup
-  const [oneDriveConnected, setOneDriveConnected] = useState(false)
-  const [oneDriveEmail, setOneDriveEmail] = useState<string | null>(null)
+  // Backup
   const [backupLoading, setBackupLoading] = useState(false)
   const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
-  const [autoBackup, setAutoBackup] = useState(false)
-  const [lastBackup, setLastBackup] = useState<string | null>(null)
 
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,42 +58,11 @@ export function SettingsPage() {
     }
   }
 
-  const connectOneDrive = async () => {
-    // Simulation de connexion OneDrive (en production, utiliser Microsoft Graph API)
-    setBackupLoading(true)
-    setBackupMessage(null)
-    
-    try {
-      // En production, ceci ouvrirait une popup OAuth2 Microsoft
-      // Pour la démo, on simule une connexion réussie
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      
-      setOneDriveConnected(true)
-      setOneDriveEmail('user@outlook.com')
-      setBackupMessage({ type: 'success', text: 'Connexion à OneDrive réussie' })
-    } catch (error: any) {
-      setBackupMessage({ type: 'error', text: 'Erreur de connexion à OneDrive' })
-    } finally {
-      setBackupLoading(false)
-    }
-  }
-
-  const disconnectOneDrive = () => {
-    setOneDriveConnected(false)
-    setOneDriveEmail(null)
-    setAutoBackup(false)
-    setLastBackup(null)
-    setBackupMessage({ type: 'success', text: 'Déconnexion de OneDrive effectuée' })
-  }
-
   const performBackup = async () => {
-    if (!oneDriveConnected) return
-
     setBackupLoading(true)
     setBackupMessage(null)
 
     try {
-      // Récupérer toutes les données de l'utilisateur
       const [
         { data: vehicles },
         { data: maintenance },
@@ -128,8 +93,6 @@ export function SettingsPage() {
         }
       }
 
-      // En production, ceci enverrait le fichier à OneDrive via Microsoft Graph API
-      // Pour la démo, on télécharge le fichier localement
       const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -140,8 +103,7 @@ export function SettingsPage() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
 
-      setLastBackup(new Date().toLocaleString('fr-FR'))
-      setBackupMessage({ type: 'success', text: 'Sauvegarde effectuée avec succès' })
+      setBackupMessage({ type: 'success', text: 'Sauvegarde téléchargée avec succès' })
     } catch (error: any) {
       setBackupMessage({ type: 'error', text: 'Erreur lors de la sauvegarde' })
     } finally {
@@ -164,15 +126,71 @@ export function SettingsPage() {
         throw new Error('Format de fichier invalide')
       }
 
-      // Confirmation avant restauration
       if (!confirm(`Voulez-vous restaurer les données du ${new Date(backupData.exportDate).toLocaleDateString('fr-FR')} ?\n\nAttention : ceci remplacera toutes vos données actuelles.`)) {
         setBackupLoading(false)
         return
       }
 
-      // En production, implémenter la logique de restauration
-      // Pour l'instant, afficher un message
-      setBackupMessage({ type: 'success', text: 'Restauration terminée (fonctionnalité en développement)' })
+      const userId = user?.id
+      if (!userId) throw new Error('Utilisateur non connecté')
+
+      // Supprimer les données existantes (dans l'ordre pour respecter les FK)
+      await Promise.all([
+        supabase.from('maintenance_records').delete().eq('user_id', userId),
+        supabase.from('reminders').delete().eq('user_id', userId),
+        supabase.from('fuel_logs').delete().eq('user_id', userId),
+        supabase.from('garage_visits').delete().eq('user_id', userId),
+        supabase.from('maintenance_schedules').delete().eq('user_id', userId)
+      ])
+      await supabase.from('vehicles').delete().eq('user_id', userId)
+
+      // Réinsérer les véhicules
+      if (backupData.data.vehicles?.length > 0) {
+        const vehicles = backupData.data.vehicles.map((v: any) => ({
+          ...v,
+          user_id: userId,
+          id: undefined
+        }))
+        
+        const { data: insertedVehicles, error: vehicleError } = await supabase
+          .from('vehicles')
+          .insert(vehicles)
+          .select()
+
+        if (vehicleError) throw vehicleError
+
+        // Mapping ancien ID -> nouveau ID
+        const vehicleIdMap = new Map<string, string>()
+        backupData.data.vehicles.forEach((v: any, index: number) => {
+          if (insertedVehicles?.[index]) {
+            vehicleIdMap.set(v.id, insertedVehicles[index].id)
+          }
+        })
+
+        // Insérer les autres données avec les nouveaux IDs
+        const insertWithMapping = async (tableName: string, records: any[]) => {
+          if (!records?.length) return
+          
+          const mappedRecords = records.map((r: any) => ({
+            ...r,
+            id: undefined,
+            user_id: userId,
+            vehicle_id: vehicleIdMap.get(r.vehicle_id) || r.vehicle_id
+          }))
+
+          await supabase.from(tableName).insert(mappedRecords)
+        }
+
+        await Promise.all([
+          insertWithMapping('maintenance_records', backupData.data.maintenance_records),
+          insertWithMapping('reminders', backupData.data.reminders),
+          insertWithMapping('fuel_logs', backupData.data.fuel_logs),
+          insertWithMapping('garage_visits', backupData.data.garage_visits),
+          insertWithMapping('maintenance_schedules', backupData.data.maintenance_schedules)
+        ])
+      }
+
+      setBackupMessage({ type: 'success', text: 'Restauration terminée avec succès ! Rechargez la page pour voir vos données.' })
     } catch (error: any) {
       setBackupMessage({ type: 'error', text: error.message || 'Erreur lors de la restauration' })
     } finally {
@@ -268,101 +286,45 @@ export function SettingsPage() {
         </form>
       </div>
 
-      {/* Sauvegarde OneDrive */}
+      {/* Sauvegarde et restauration */}
       <div className="card">
         <div className="flex items-center gap-3 mb-6">
           <div className="p-2 rounded-lg bg-blue-100">
-            <Cloud className="w-5 h-5 text-blue-600" />
+            <HardDrive className="w-5 h-5 text-blue-600" />
           </div>
-          <h2 className="text-lg font-semibold text-gray-900">Sauvegarde OneDrive</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Sauvegarde et restauration</h2>
         </div>
 
-        {!oneDriveConnected ? (
-          <div className="text-center py-6">
-            <Cloud className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-600 mb-4">
-              Connectez votre compte Microsoft OneDrive pour sauvegarder automatiquement vos données.
-            </p>
-            <button
-              onClick={connectOneDrive}
-              disabled={backupLoading}
-              className="btn btn-primary flex items-center gap-2 mx-auto"
-            >
-              {backupLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <ExternalLink className="w-4 h-4" />
-              )}
-              Connecter OneDrive
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
-              <div className="flex items-center gap-3">
-                <Check className="w-5 h-5 text-green-600" />
-                <div>
-                  <p className="font-medium text-green-800">Connecté à OneDrive</p>
-                  <p className="text-sm text-green-600">{oneDriveEmail}</p>
-                </div>
-              </div>
-              <button
-                onClick={disconnectOneDrive}
-                className="text-sm text-green-700 hover:text-green-900 underline"
-              >
-                Déconnecter
-              </button>
-            </div>
+        <p className="text-gray-600 mb-6">
+          Exportez vos données dans un fichier JSON ou restaurez-les depuis une sauvegarde précédente.
+        </p>
 
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-gray-900">Sauvegarde automatique</p>
-                <p className="text-sm text-gray-500">Sauvegarder chaque semaine</p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={autoBackup}
-                  onChange={(e) => setAutoBackup(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              </label>
-            </div>
-
-            {lastBackup && (
-              <p className="text-sm text-gray-500">
-                Dernière sauvegarde : {lastBackup}
-              </p>
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={performBackup}
+            disabled={backupLoading}
+            className="btn btn-primary flex items-center gap-2"
+          >
+            {backupLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4" />
             )}
+            Télécharger une sauvegarde
+          </button>
 
-            <div className="flex gap-3">
-              <button
-                onClick={performBackup}
-                disabled={backupLoading}
-                className="btn btn-primary flex items-center gap-2"
-              >
-                {backupLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Upload className="w-4 h-4" />
-                )}
-                Sauvegarder maintenant
-              </button>
-
-              <label className="btn btn-secondary flex items-center gap-2 cursor-pointer">
-                <Download className="w-4 h-4" />
-                Restaurer
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={handleRestore}
-                  className="hidden"
-                />
-              </label>
-            </div>
-          </div>
-        )}
+          <label className="btn btn-secondary flex items-center gap-2 cursor-pointer">
+            <Upload className="w-4 h-4" />
+            Restaurer depuis un fichier
+            <input
+              type="file"
+              accept=".json"
+              onChange={handleRestore}
+              disabled={backupLoading}
+              className="hidden"
+            />
+          </label>
+        </div>
 
         {backupMessage && (
           <div className={`flex items-center gap-2 p-3 rounded-lg mt-4 ${
@@ -381,13 +343,13 @@ export function SettingsPage() {
       {/* Info supplémentaire */}
       <div className="card bg-blue-50 border-blue-200">
         <div className="flex gap-3">
-          <AlertTriangle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
           <div className="text-sm text-blue-800">
             <p className="font-medium mb-1">À propos des sauvegardes</p>
             <p>
               Les sauvegardes contiennent toutes vos données : véhicules, entretiens, rappels, 
               carburant et visites garage. Elles sont stockées au format JSON et peuvent être 
-              restaurées à tout moment.
+              restaurées à tout moment. Pensez à faire des sauvegardes régulières !
             </p>
           </div>
         </div>
