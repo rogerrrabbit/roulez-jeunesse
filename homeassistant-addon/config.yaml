@@ -1,0 +1,33 @@
+# Home Assistant Add-on Configuration
+name: "Roulez Jeunesse"
+version: "1.0.0"
+slug: "roulez_jeunesse"
+description: "Carnet d'entretien automobile avec intégration Home Assistant"
+url: "https://github.com/votre-repo/roulez-jeunesse"
+arch:
+  - amd64
+  - aarch64
+  - armv7
+init: false
+homeassistant_api: true
+hassio_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: "mdi:car"
+panel_title: "Roulez Jeunesse"
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "Web interface & API"
+map:
+  - share:rw
+  - ssl:ro
+options:
+  database_path: "/share/roulez-jeunesse/data.db"
+  api_port: 8099
+  log_level: "info"
+schema:
+  database_path: str
+  api_port: port
+  log_level: list(debug|info|warn|error)
+image: "ghcr.io/votre-repo/roulez-jeunesse-addon-{arch}"

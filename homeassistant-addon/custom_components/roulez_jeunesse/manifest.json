@@ -1,0 +1,12 @@
+{
+  "domain": "roulez_jeunesse",
+  "name": "Roulez Jeunesse",
+  "codeowners": ["@votre-username"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/votre-repo/roulez-jeunesse",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/votre-repo/roulez-jeunesse/issues",
+  "requirements": ["aiohttp>=3.8.0"],
+  "version": "1.0.0"
+}
