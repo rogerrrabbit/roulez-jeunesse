@@ -20,13 +20,13 @@ Carnet d'entretien automobile avec intégration native Home Assistant.
 1. Ajoutez ce dépôt aux add-ons Home Assistant :
    - Allez dans **Paramètres** → **Modules complémentaires** → **Boutique des modules**
    - Cliquez sur **⋮** (3 points) → **Dépôts**
-  - Ajoutez : `https://github.com/rogerrrabbit/roulez-jeunesse`
+   - Ajoutez : `https://github.com/votre-repo/roulez-jeunesse`
 2. Installez "Roulez Jeunesse" depuis la boutique
 3. Démarrez l'add-on
 
 ### Méthode 2 : Installation manuelle
 
-1. Copiez le dossier `roulez_jeunesse` (à la racine du dépôt) dans `/addons/roulez_jeunesse/`
+1. Copiez le dossier `homeassistant-addon` dans `/addons/roulez-jeunesse/`
 2. Redémarrez Home Assistant
 3. Installez depuis la boutique des modules locaux
 

@@ -1,0 +1,22 @@
+{
+  "title": "Roulez Jeunesse",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configuration Roulez Jeunesse",
+        "description": "Entrez les informations de connexion à votre instance Roulez Jeunesse",
+        "data": {
+          "host": "Hôte",
+          "port": "Port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter à Roulez Jeunesse",
+      "unknown": "Erreur inattendue"
+    },
+    "abort": {
+      "already_configured": "Cette instance est déjà configurée"
+    }
+  }
+}
